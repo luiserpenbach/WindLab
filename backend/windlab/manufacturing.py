@@ -104,6 +104,9 @@ def traveller(project: S.Project) -> dict[str, str]:
             f"- [ ] Proof: **{req.meop * req.proof_factor:.1f} MPa**, hold ≥ 60 s; permanent volumetric expansion ≤ 5 % of total",
             "- [ ] Leak test at MEOP with helium or He/N2 mix: ______",
             f"- [ ] Expected liner residual hoop stress after autofrettage: {st.residual.liner_hoop:.0f} MPa",
+            f"- [ ] Water jacket: expected expansion at autofrettage {st.expansion_af_total:.0f} mL total, "
+            f"{st.expansion_af_permanent:.0f} mL permanent; at proof {st.expansion_proof_total:.0f} mL total, "
+            f"~{max(st.expansion_proof_permanent, 0):.0f} mL permanent. Measured: ______ / ______ mL",
         ]
     md += [
         "",

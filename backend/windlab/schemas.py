@@ -195,6 +195,19 @@ class MachineSpec(BaseModel):
     pause_between_layers: bool = True
 
 
+class TestRecord(BaseModel):
+    id: str
+    serial: str = ""
+    kind: Literal["burst", "proof", "autofrettage", "cycle"] = "burst"
+    pressure: float = Field(..., gt=0, description="Burst / test pressure [MPa]")
+    cycles: Optional[int] = Field(None, description="Cycle test: cycles to failure (or run-out)")
+    failure_location: Literal["cylinder", "dome-a", "dome-b", "boss", "leak", "none"] = "cylinder"
+    volumetric_expansion_total: Optional[float] = Field(None, description="Measured at test pressure [mL]")
+    volumetric_expansion_permanent: Optional[float] = Field(None, description="Measured after venting [mL]")
+    date: str = ""
+    notes: str = ""
+
+
 class Project(BaseModel):
     schema_version: int = SCHEMA_VERSION
     name: str = "Untitled COPV"
@@ -205,6 +218,7 @@ class Project(BaseModel):
     materials: MaterialLibrary = MaterialLibrary()
     layers: list[Layer] = []
     machine: MachineSpec = MachineSpec()
+    tests: list[TestRecord] = []
 
 
 # --------------------------------------------------------------------------- results
@@ -296,6 +310,10 @@ class StructuralResult(BaseModel):
     meop_cold: Optional[LoadPoint] = None
     meop_hot: Optional[LoadPoint] = None
     stress_ratio_worst: float = Field(0.0, description="Max fibre stress ratio at MEOP over the temperature range")
+    expansion_af_total: float = Field(0.0, description="Volumetric expansion at autofrettage pressure [mL]")
+    expansion_af_permanent: float = Field(0.0, description="Permanent volumetric expansion after autofrettage [mL]")
+    expansion_proof_total: float = Field(0.0, description="Volumetric expansion at proof [mL]")
+    expansion_proof_permanent: float = Field(0.0, description="Additional permanent expansion from proof [mL]")
     burst_pressure: float
     burst_mode: str
     required_burst: float
@@ -433,6 +451,27 @@ class OptimiseResult(BaseModel):
     mass_before: float
     mass_after: float
     evaluations: int
+    notes: list[str]
+
+
+class TestCorrelation(BaseModel):
+    id: str
+    serial: str
+    kind: str
+    measured: float
+    predicted: Optional[float]
+    ratio: Optional[float] = Field(None, description="Measured / predicted")
+    location_match: Optional[bool] = None
+    expansion_ratio: Optional[float] = Field(None, description="Measured / predicted total volumetric expansion")
+
+
+class CalibrationResult(BaseModel):
+    tests: list[TestCorrelation]
+    burst_mean_ratio: Optional[float]
+    burst_cov: Optional[float]
+    current_efficiency: float
+    suggested_efficiency: Optional[float] = Field(None, description="Translation efficiency matching the mean")
+    b_basis_efficiency: Optional[float] = Field(None, description="Mean - k*sd (one-sided tolerance, 90%/95%)")
     notes: list[str]
 
 

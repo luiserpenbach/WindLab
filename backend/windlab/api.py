@@ -178,6 +178,13 @@ def post_fea_export(project: S.Project):
     return _design_errors(lambda: export(project))
 
 
+@app.post("/api/calibrate", response_model=S.CalibrationResult)
+def post_calibrate(project: S.Project):
+    from .core.calibration import calibrate
+
+    return _design_errors(lambda: calibrate(project))
+
+
 @app.post("/api/report")
 def post_report(project: S.Project):
     from .report import report_html

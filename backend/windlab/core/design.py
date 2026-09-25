@@ -303,7 +303,20 @@ def structural(b: Build) -> tuple[S.StructuralResult, dict]:
     cycles = liner_fatigue_cycles(mat, hist[-1].state.liner_sigma, meop_state.liner_sigma)
     t_hoop, t_hel = netting_thickness(b, p_req)
     dz, ds = dome_netting_stress(b, req.meop)
+    # volumetric expansion (cylinder strain field applied to the internal volume; domes are stiffer, so this
+    # slightly over-predicts the total; water-jacket targets should be confirmed on the first articles)
+    V = b.liner_inner.volume() / 1000.0  # mL
+    ev = lambda st_: 2 * (st_.eps[1] - v.initial().eps[1]) + (st_.eps[0] - v.initial().eps[0])  # noqa: E731
+    i_af_peak = phases.index("unload") - 1
+    exp = dict(
+        expansion_af_total=V * ev(hist[i_af_peak].state),
+        expansion_af_permanent=V * ev(residual_state),
+        expansion_proof_total=V * (ev(hist[i_proof].state) - ev(residual_state)),  # water jacket: from post-AF
+        expansion_proof_permanent=V * (ev(hist[max(i for i in range(i_proof, i_meop) if phases[i] == "unload")].state)
+                                       - ev(residual_state)),
+    )
     res = S.StructuralResult(
+        **exp,
         autofrettage_pressure=p_af,
         autofrettage_auto=auto,
         autofrettage_window=(p_lo, p_hi),
