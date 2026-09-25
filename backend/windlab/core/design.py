@@ -27,6 +27,7 @@ from .paths import HelicalPass
 
 REVERSE_YIELD_LIMIT = 0.9  # Bauschinger knock-down on the compressive reverse-yield check
 AF_FIBER_RATIO_LIMIT = 0.75  # max fibre strain ratio allowed during autofrettage
+BRIDGE_GAP = 0.05  # mm: fibre lift-off over concave surface worth reporting
 
 
 class DesignError(ValueError):
@@ -485,17 +486,17 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
                         value=float(tr.loss[worst]), limit=0.6, refs=[b.layers[worst].spec.id],
                         detail=f"Layer {worst + 1} loses {tr.loss[worst] * 100:.0f}% of its winding prestress as later "
                                "layers compress it (slack inner layers wrinkle). Use the tension schedule."))
-    bridging = [(bl, normal_curvature(bl)[1]) for bl in b.layers if bl.gp is not None]
-    bridging = [(bl, L) for bl, L in bridging if L > 2.0]
+    bridging = [(bl, normal_curvature(bl)) for bl in b.layers if bl.gp is not None]
+    bridging = [(bl, kn) for bl, kn in bridging if kn[2] > BRIDGE_GAP]
     if bridging:
-        worst = max(bridging, key=lambda x: x[1])
+        worst = max(bridging, key=lambda x: x[1][2])
         names = ", ".join(str(bl.index + 1) for bl, _ in bridging)
-        out.append(S.Check(id="layup.bridging", label="Fibre bridging", status="warn", value=worst[1], unit="mm",
-                           refs=[bl.spec.id for bl, _ in bridging],
-                           detail=f"Layers {names} cross concave surface (negative normal curvature) near their "
-                                  f"turnarounds and will bridge (worst {worst[1]:.0f} mm per pass, layer "
+        out.append(S.Check(id="layup.bridging", label="Fibre bridging", status="warn", value=worst[1][2], unit="mm",
+                           limit=BRIDGE_GAP, refs=[bl.spec.id for bl, _ in bridging],
+                           detail=f"Layers {names} cross concave surface near their turnarounds or drop-offs and "
+                                  f"lift off it (largest gap about {worst[1][2]:.2f} mm under layer "
                                   f"{worst[0].index + 1}). Adjust turnaround offsets so turnarounds do not land "
-                                  "just inside earlier build-up ridges."))
+                                  "just inside earlier build-up ridges, or taper hoop drop-offs."))
     fe = extra.get("fe")
     if fe is not None:
         half = b.project.liner.cyl_length / 2
@@ -568,11 +569,14 @@ def fe_result(b: Build, st: S.StructuralResult) -> S.FEResult:
     )
 
 
-def normal_curvature(bl: BuiltLayer) -> tuple[float, float]:
-    """Min fibre normal curvature along one pass and the path length where it is negative
-    (the fibre bridges over concave surface instead of lying on it)."""
+def normal_curvature(bl: BuiltLayer) -> tuple[float, float, float]:
+    """Fibre normal curvature along one pass.
+
+    Returns (min kn [1/mm], path length with kn < 0 [mm], largest bridging gap [mm]). Over a concave
+    stretch of length L the tensioned fibre spans a chord and leaves a gap of about |kn| L^2 / 8.
+    """
     if bl.gp is None:
-        return 1.0 / max(bl.R_mid, 1e-9), 0.0
+        return 1.0 / max(bl.R_mid, 1e-9), 0.0, 0.0
     tab = paths.SurfaceTable(bl.base)
     gp = bl.gp
     v = tab.at(np.asarray(gp.s))
@@ -580,7 +584,16 @@ def normal_curvature(bl: BuiltLayer) -> tuple[float, float]:
     kn = v[:, 3] * np.cos(gp.alpha) ** 2 + v[:, 2] / r * np.sin(gp.alpha) ** 2
     dl = np.sqrt(np.diff(gp.z) ** 2 + np.diff(gp.r) ** 2 + (0.5 * (gp.r[1:] + gp.r[:-1]) * np.diff(gp.phi)) ** 2)
     neg = (kn[1:] < -1e-5) & (kn[:-1] < -1e-5)
-    return float(kn.min()), float(dl[neg].sum())
+    gap, run_len, run_k = 0.0, 0.0, 0.0
+    for is_neg, d, k in zip(neg, dl, 0.5 * (kn[1:] + kn[:-1])):
+        if is_neg:
+            run_len += d
+            run_k = max(run_k, -k)
+        else:
+            gap = max(gap, run_k * run_len**2 / 8.0)
+            run_len, run_k = 0.0, 0.0
+    gap = max(gap, run_k * run_len**2 / 8.0)
+    return float(kn.min()), float(dl[neg].sum()), float(gap)
 
 
 def _pattern_out(p: pat.Pattern) -> S.PatternCandidate:
@@ -598,7 +611,7 @@ def layer_result(b: Build, bl: BuiltLayer) -> S.LayerResult:
     fiber_g = L_mm / 1e6 * bl.spec.tows * fb.tex
     resin_g = fiber_g / fb.density * (1 - comp.fiber_volume_fraction) / comp.fiber_volume_fraction * resin.density
     speed = b.project.machine.fiber_speed
-    kn_min, bridge = normal_curvature(bl)
+    kn_min, bridge, bridge_gap = normal_curvature(bl)
     ten = b.tension.get(bl.index) if b.tension else None
     return S.LayerResult(
         id=bl.spec.id,
@@ -617,6 +630,7 @@ def layer_result(b: Build, bl: BuiltLayer) -> S.LayerResult:
         friction=bl.spec.friction,
         min_normal_curvature=kn_min,
         bridging_length=bridge,
+        bridging_gap=bridge_gap,
         winding_stress=ten[0] if ten else 0.0,
         residual_prestress=ten[1] if ten else 0.0,
         tension_loss=ten[2] if ten else 0.0,
@@ -740,9 +754,48 @@ def suggest_layup(project: S.Project, max_iter: int = 60) -> tuple[list[S.Layer]
         layers = make(n_hel, n_hoop)
     else:
         notes.append("Did not converge; review the checks")
+    layers = _best_stagger(project, layers, notes)
     layers = apply_tension_schedule(project, layers)
     notes.append("Winding tensions set for uniform residual prestress (outermost layer keeps the template tension)")
     return layers, notes
+
+
+def _stagger_patterns(n: int, B: float, cap: float) -> dict[str, list[float]]:
+    steps = max(int(cap // (0.5 * B)), 1)
+    return {
+        "cyclic": [((k % 6) * 0.5 * B) for k in range(n)],
+        "ascending": [min(k, steps) * 0.5 * B if k <= steps else ((k - steps - 1) % (steps + 1)) * 0.5 * B
+                      for k in range(n)],
+        "zigzag": [(steps - abs(steps - (k % (2 * steps or 1)))) * 0.5 * B for k in range(n)],
+    }
+
+
+def _best_stagger(project: S.Project, layers: list[S.Layer], notes: list[str]) -> list[S.Layer]:
+    """Pick the helical turnaround stagger with the smallest fibre bridging gap (all checks still passing)."""
+    hel = [i for i, L in enumerate(layers) if L.type == "helical"]
+    if len(hel) < 2:
+        return layers
+    lin = project.liner
+    B = layers[hel[0]].band_width
+    cap = 0.3 * (lin.radius - max(lin.boss_radius_a, lin.boss_radius_b))
+    best, best_gap = None, math.inf
+    for name, offs in _stagger_patterns(len(hel), B, cap).items():
+        cand = list(layers)
+        for k, i in enumerate(hel):
+            cand[i] = cand[i].model_copy(update={"turnaround_offset": round(offs[k], 3)})
+        try:
+            res = analyze(project.model_copy(update={"layers": cand}))
+        except DesignError:
+            continue
+        if any(c.status == "fail" and not c.id.startswith("tension.") for c in res.checks):
+            continue
+        gap = max((L.bridging_gap for L in res.layers), default=0.0)
+        if gap < best_gap - 1e-9:
+            best, best_gap, best_name = cand, gap, name
+    if best is None:
+        return layers
+    notes.append(f"Helical turnaround stagger: {best_name} (largest bridging gap {best_gap:.2f} mm)")
+    return best
 
 
 def apply_tension_schedule(project: S.Project, layers: list[S.Layer]) -> list[S.Layer]:

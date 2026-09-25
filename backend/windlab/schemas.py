@@ -272,6 +272,7 @@ class LayerResult(BaseModel):
     friction: float = 0.0
     min_normal_curvature: float = Field(0.0, description="Smallest fibre normal curvature on the path [1/mm]")
     bridging_length: float = Field(0.0, description="Path length per pass with negative normal curvature [mm]")
+    bridging_gap: float = Field(0.0, description="Largest estimated fibre lift-off over concave surface [mm]")
     winding_stress: float = Field(0.0, description="Ply stress from the winding tension [MPa]")
     residual_prestress: float = Field(0.0, description="Ply prestress left after all layers are wound [MPa]")
     tension_loss: float = Field(0.0, description="Fraction of the winding prestress lost")
