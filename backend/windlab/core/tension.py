@@ -66,7 +66,7 @@ def analyse(b: Build, tensions: np.ndarray | None = None) -> TensionResult:
     return TensionResult([bl.spec.id for bl in b.layers], sw, res, loss, liner, T)
 
 
-def schedule(b: Build, target_tension: float | None = None, max_factor: float = 3.0) -> np.ndarray:
+def schedule(b: Build, target_tension: float | None = None, max_factor: float = 5.0) -> np.ndarray:
     """Tensions [N] giving the same residual ply stress in every layer.
 
     ``target_tension`` sets the outermost layer's tension (default: its current

@@ -625,6 +625,7 @@ def suggest_layup(project: S.Project, max_iter: int = 60) -> tuple[list[S.Layer]
         assert st is not None
         fails = {c.id for c in res.checks if c.status == "fail"}
         warns = {c.id for c in res.checks if c.status == "warn"}
+        fails = {f for f in fails if not f.startswith("tension.")}
         if st.burst_mode == "helical" or "sr.helical" in fails or "burst.balance" in warns:
             n_hel += 1
         elif "burst" in fails or "sr.hoop" in fails:
@@ -653,4 +654,18 @@ def suggest_layup(project: S.Project, max_iter: int = 60) -> tuple[list[S.Layer]
         layers = make(n_hel, n_hoop)
     else:
         notes.append("Did not converge; review the checks")
+    layers = apply_tension_schedule(project, layers)
+    notes.append("Winding tensions set for uniform residual prestress (outermost layer keeps the template tension)")
     return layers, notes
+
+
+def apply_tension_schedule(project: S.Project, layers: list[S.Layer]) -> list[S.Layer]:
+    """Set layer tensions to the uniform-prestress schedule (outermost layer keeps its tension)."""
+    from . import tension
+
+    try:
+        b = build(project.model_copy(update={"layers": layers}))
+    except DesignError:
+        return layers
+    T = tension.schedule(b)
+    return [L.model_copy(update={"tension": round(float(t) * 2) / 2}) for L, t in zip(layers, T)]

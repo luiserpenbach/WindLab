@@ -159,6 +159,32 @@ def post_gcode(req: S.GcodeRequest):
     return _design_errors(run)
 
 
+@app.post("/api/optimise", response_model=S.OptimiseResult)
+def post_optimise(req: S.OptimiseRequest):
+    from .core.optimize import optimise
+
+    def run():
+        r = optimise(req.project, req.time_budget)
+        return S.OptimiseResult(layers=r.layers, mass_before=r.mass_before, mass_after=r.mass_after,
+                                evaluations=r.evaluations, notes=r.notes)
+
+    return _design_errors(run)
+
+
+@app.post("/api/fea-export")
+def post_fea_export(project: S.Project):
+    from .fea_export import export
+
+    return _design_errors(lambda: export(project))
+
+
+@app.post("/api/report")
+def post_report(project: S.Project):
+    from .report import report_html
+
+    return _design_errors(lambda: {"html": report_html(project)})
+
+
 @app.post("/api/traveller")
 def post_traveller(project: S.Project):
     return _design_errors(lambda: traveller(project))

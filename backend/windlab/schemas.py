@@ -346,7 +346,7 @@ class ThicknessMapResult(BaseModel):
 class TensionScheduleRequest(BaseModel):
     project: Project
     target_tension: Optional[float] = Field(None, gt=0, description="Outermost layer tension [N]")
-    max_factor: float = Field(3.0, ge=1.0, le=10.0, description="Cap on inner layer stress vs target")
+    max_factor: float = Field(5.0, ge=1.0, le=10.0, description="Cap on inner layer stress vs target")
 
 
 class TensionScheduleResult(BaseModel):
@@ -357,6 +357,19 @@ class TensionScheduleResult(BaseModel):
     residual_recommended: list[float]
     liner_hoop_current: float
     liner_hoop_recommended: float
+
+
+class OptimiseRequest(BaseModel):
+    project: Project
+    time_budget: float = Field(60.0, ge=5, le=600, description="Wall-clock budget [s]")
+
+
+class OptimiseResult(BaseModel):
+    layers: list[Layer]
+    mass_before: float
+    mass_after: float
+    evaluations: int
+    notes: list[str]
 
 
 class GcodeRequest(BaseModel):
