@@ -16,5 +16,8 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     chunkSizeWarningLimit: 1200,
+    rollupOptions: {
+      output: { manualChunks: { three: ['three'] } },
+    },
   },
 });

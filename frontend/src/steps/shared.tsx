@@ -4,7 +4,15 @@ import { sig } from '../util/format';
 
 const ORDER: Record<Status, number> = { fail: 0, warn: 1, info: 2, ok: 3 };
 
-export function ChecksList({ checks, title = 'Checks', sort = true }: { checks: Check[]; title?: string; sort?: boolean }) {
+export function ChecksList({
+  checks,
+  title = 'Checks',
+  sort = true,
+}: {
+  checks: Check[];
+  title?: string;
+  sort?: boolean;
+}) {
   if (!checks.length) return null;
   const list = sort ? [...checks].sort((a, b) => ORDER[a.status] - ORDER[b.status]) : checks;
   return (

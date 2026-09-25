@@ -52,7 +52,11 @@ export function AnalysisPanel() {
               </>
             }
           />
-          <Kpi label="Burst mode" value={<span className="kpi-text">{st.burst_mode}</span>} sub={`fibre strength ${sig(st.fiber_strength, 4)} MPa`} />
+          <Kpi
+            label="Burst mode"
+            value={<span className="kpi-text">{st.burst_mode}</span>}
+            sub={`fibre strength ${sig(st.fiber_strength, 4)} MPa`}
+          />
           <Kpi
             label="Stress ratio hoop"
             value={sig(st.stress_ratio_hoop, 3)}
@@ -80,7 +84,8 @@ export function AnalysisPanel() {
             value={sig(st.autofrettage_pressure, 4)}
             unit="MPa"
             status={
-              st.autofrettage_pressure >= st.autofrettage_window[0] && st.autofrettage_pressure <= st.autofrettage_window[1]
+              st.autofrettage_pressure >= st.autofrettage_window[0] &&
+              st.autofrettage_pressure <= st.autofrettage_window[1]
                 ? 'ok'
                 : 'warn'
             }
@@ -102,7 +107,11 @@ export function AnalysisPanel() {
         </div>
       ) : (
         <div className="kpi-grid">
-          <Kpi label="Mass" value={fmtMass(m.total)} sub={`liner ${fmtMass(m.liner)} · fibre ${fmtMass(m.fiber)} · resin ${fmtMass(m.resin)}`} />
+          <Kpi
+            label="Mass"
+            value={fmtMass(m.total)}
+            sub={`liner ${fmtMass(m.liner)} · fibre ${fmtMass(m.fiber)} · resin ${fmtMass(m.resin)}`}
+          />
           <Kpi label="Volume" value={sig(m.volume, 4)} unit="L" sub={`PV/W ${sig(m.pv_w, 3)} km`} />
         </div>
       )}
@@ -121,16 +130,26 @@ function LoadTable({ st }: { st: StructuralResult }) {
   ];
   return (
     <div className="table-scroll">
-      <table className="data-table">
+      <table className="data-table compact">
         <caption>Stress state [MPa]</caption>
         <thead>
           <tr>
             <th>State</th>
-            <th className="num">p</th>
-            <th className="num" title="Liner von Mises">Liner σvm</th>
-            <th className="num">Liner σθ</th>
-            <th className="num">Fibre hoop</th>
-            <th className="num">Fibre helix</th>
+            <th className="num" title="Pressure [MPa]">
+              p
+            </th>
+            <th className="num" title="Liner von Mises stress [MPa]">
+              Liner vM
+            </th>
+            <th className="num" title="Liner hoop stress [MPa]">
+              Liner θ
+            </th>
+            <th className="num" title="Hoop fibre stress [MPa]">
+              F hoop
+            </th>
+            <th className="num" title="Helical fibre stress [MPa]">
+              F helix
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -190,8 +209,20 @@ export function LoadHistoryChart({ height = 250 }: { height?: number }) {
 
   const phaseAt = (x: number) => h[Math.round(x)]?.phase ?? '';
   return (
-    <div className="chart-with-tools">
-      <div className="chart-tools">
+    <LineChart
+      title="Load history"
+      series={series}
+      bands={bands}
+      xLabel={xMode === 'pressure' ? 'Pressure' : 'Load step'}
+      xUnit={xMode === 'pressure' ? 'MPa' : undefined}
+      yLabel="Stress"
+      yUnit="MPa"
+      height={height}
+      hover={xMode === 'pressure' ? 'nearest' : 'x'}
+      xFormat={xMode === 'step' ? (x) => `${Math.round(x)} (${phaseAt(x)})` : undefined}
+      hlines={[{ value: 0, color: 'var(--axis)' }]}
+      emptyText="No load history"
+      tools={
         <Segmented<HistX>
           size="sm"
           ariaLabel="Load history x axis"
@@ -202,22 +233,8 @@ export function LoadHistoryChart({ height = 250 }: { height?: number }) {
           ]}
           onChange={setXMode}
         />
-      </div>
-      <LineChart
-        title="Load history"
-        series={series}
-        bands={bands}
-        xLabel={xMode === 'pressure' ? 'Pressure' : 'Load step'}
-        xUnit={xMode === 'pressure' ? 'MPa' : undefined}
-        yLabel="Stress"
-        yUnit="MPa"
-        height={height}
-        hover={xMode === 'pressure' ? 'nearest' : 'x'}
-        xFormat={xMode === 'step' ? (x) => `${Math.round(x)} (${phaseAt(x)})` : undefined}
-        hlines={[{ value: 0, color: 'var(--axis)' }]}
-        emptyText="No load history"
-      />
-    </div>
+      }
+    />
   );
 }
 
@@ -231,7 +248,11 @@ export function DomeStressChart({ height = 250 }: { height?: number }) {
     <LineChart
       title="Fibre stress at MEOP along z"
       series={c ? [{ id: 'dfs', name: 'Fibre stress', x: c.x, y: c.y, color: 'var(--series-2)' }] : []}
-      hlines={limit != null ? [{ value: limit, label: `limit ${sig(limit, 4)} MPa`, color: 'var(--status-critical)' }] : undefined}
+      hlines={
+        limit != null
+          ? [{ value: limit, label: `limit ${sig(limit, 4)} MPa`, color: 'var(--status-critical)' }]
+          : undefined
+      }
       xLabel="z"
       xUnit="mm"
       yLabel="σf"

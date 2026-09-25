@@ -1,6 +1,16 @@
 import { useRef } from 'react';
 import type { Controller, MachineAxis, MachineSpec, RotaryReset, TensionOutput } from '../api/types';
-import { Field, NumberField, NumberInput, Section, Segmented, Select, SelectField, Switch, TextInput } from '../components/fields';
+import {
+  Field,
+  NumberField,
+  NumberInput,
+  Section,
+  Segmented,
+  Select,
+  SelectField,
+  Switch,
+  TextInput,
+} from '../components/fields';
 import { Banner } from '../components/ui';
 import { useAnalysis, useCatalog } from '../state/analysis';
 import { axis, normalizeProject } from '../state/defaults';
@@ -30,12 +40,23 @@ function grblHints(m: MachineSpec): { kind: 'warn' | 'info'; text: string }[] {
     },
   ];
   const rotLetters = /^[ABC]$/i;
-  if (rotLetters.test(m.mandrel.letter)) out.push({ kind: 'warn', text: `Mandrel letter “${m.mandrel.letter}” is not supported by stock GRBL.` });
+  if (rotLetters.test(m.mandrel.letter))
+    out.push({ kind: 'warn', text: `Mandrel letter “${m.mandrel.letter}” is not supported by stock GRBL.` });
   if (m.axes_count === 4 && m.eye && rotLetters.test(m.eye.letter))
     out.push({ kind: 'warn', text: `Eye letter “${m.eye.letter}” needs a 4-axis GRBL fork (e.g. grblHAL).` });
-  if (m.tension_output === 'm67') out.push({ kind: 'warn', text: 'GRBL has no M67 analog output. Use “spindle” (S word / PWM) for tension control.' });
-  if (m.rotary_reset === 'none') out.push({ kind: 'warn', text: 'Rotary reset “none” with GRBL risks float precision loss on long programs.' });
-  const letters = [m.carriage.letter, m.mandrel.letter, m.crossfeed.letter, ...(m.axes_count === 4 && m.eye ? [m.eye.letter] : [])].map((x) => x.toUpperCase());
+  if (m.tension_output === 'm67')
+    out.push({
+      kind: 'warn',
+      text: 'GRBL has no M67 analog output. Use “spindle” (S word / PWM) for tension control.',
+    });
+  if (m.rotary_reset === 'none')
+    out.push({ kind: 'warn', text: 'Rotary reset “none” with GRBL risks float precision loss on long programs.' });
+  const letters = [
+    m.carriage.letter,
+    m.mandrel.letter,
+    m.crossfeed.letter,
+    ...(m.axes_count === 4 && m.eye ? [m.eye.letter] : []),
+  ].map((x) => x.toUpperCase());
   if (new Set(letters).size !== letters.length) out.push({ kind: 'warn', text: 'Two axes share the same letter.' });
   return out;
 }
@@ -48,15 +69,13 @@ export function MachinePanel() {
   const lastEye = useRef<MachineAxis | null>(m.eye);
   const set = (patch: Partial<MachineSpec>, key: string) => update(patchSection('machine', patch), `mach.${key}`);
   const setAxis = (k: AxisKey, patch: Partial<MachineAxis>, key: string) =>
-    update(
-      (p) => {
-        const cur = p.machine[k];
-        if (!cur) return p;
-        return { ...p, machine: { ...p.machine, [k]: { ...cur, ...patch } } };
-      },
-      `axis.${k}.${key}`,
-    );
-  const axes: AxisKey[] = m.axes_count === 4 ? ['carriage', 'mandrel', 'crossfeed', 'eye'] : ['carriage', 'mandrel', 'crossfeed'];
+    update((p) => {
+      const cur = p.machine[k];
+      if (!cur) return p;
+      return { ...p, machine: { ...p.machine, [k]: { ...cur, ...patch } } };
+    }, `axis.${k}.${key}`);
+  const axes: AxisKey[] =
+    m.axes_count === 4 ? ['carriage', 'mandrel', 'crossfeed', 'eye'] : ['carriage', 'mandrel', 'crossfeed'];
   const hints = grblHints(m);
 
   return (
@@ -122,73 +141,155 @@ export function MachinePanel() {
           <table className="data-table axis-table">
             <thead>
               <tr>
-                <th>Axis</th>
-                <th title="G-code letter">Ltr</th>
-                <th className="num" title="Max velocity [units/min]">Vmax</th>
-                <th className="num" title="Max acceleration [units/s²]">Amax</th>
-                <th className="num" title="Soft limit min [machine units], blank = none">Min</th>
-                <th className="num" title="Soft limit max [machine units], blank = none">Max</th>
-                <th className="num" title="Machine units per mm (linear) or per degree (rotary)">Scale</th>
-                <th title="Invert direction">Inv</th>
+                <th />
+                {axes.map((k) => (
+                  <th
+                    key={k}
+                    scope="col"
+                    title={`${AXIS_META[k].desc} [${AXIS_META[k].kind === 'linear' ? 'mm' : 'deg'}]`}
+                  >
+                    {AXIS_META[k].label}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {axes.map((k) => {
-                const a = m[k];
-                if (!a) return null;
-                const meta = AXIS_META[k];
-                const u = meta.kind === 'linear' ? 'mm' : '°';
-                return (
-                  <tr key={k}>
-                    <th scope="row" title={meta.desc}>
-                      {meta.label}
-                      <span className="muted small"> {meta.kind === 'linear' ? 'lin' : 'rot'}</span>
-                    </th>
-                    <td>
-                      <input
-                        className="text letter"
-                        aria-label={`${meta.label} letter`}
-                        value={a.letter}
-                        maxLength={1}
-                        onChange={(e) => {
-                          const v = e.target.value.toUpperCase().replace(/[^A-Z]/g, '');
-                          if (v) setAxis(k, { letter: v }, 'letter');
-                        }}
-                      />
-                    </td>
-                    <td>
-                      <NumberInput ariaLabel={`${meta.label} max velocity [units/min]`} value={a.max_velocity} gt={0} step={100} onCommit={(v) => setAxis(k, { max_velocity: v }, 'v')} />
-                    </td>
-                    <td>
-                      <NumberInput ariaLabel={`${meta.label} max acceleration [units/s²]`} value={a.max_accel} gt={0} step={10} onCommit={(v) => setAxis(k, { max_accel: v }, 'a')} />
-                    </td>
-                    <td>
-                      <NumberInput ariaLabel={`${meta.label} soft limit min`} value={a.min} placeholder="–" onClear={() => setAxis(k, { min: null }, 'min')} onCommit={(v) => setAxis(k, { min: v }, 'min')} />
-                    </td>
-                    <td>
-                      <NumberInput ariaLabel={`${meta.label} soft limit max`} value={a.max} placeholder="–" onClear={() => setAxis(k, { max: null }, 'max')} onCommit={(v) => setAxis(k, { max: v }, 'max')} />
-                    </td>
-                    <td>
-                      <NumberInput ariaLabel={`${meta.label} scale [units/${u}]`} value={a.scale} step={0.1} onCommit={(v) => setAxis(k, { scale: v }, 'scale')} />
-                    </td>
-                    <td className="center">
-                      <input type="checkbox" aria-label={`${meta.label} invert`} checked={a.invert} onChange={(e) => setAxis(k, { invert: e.target.checked }, 'inv')} />
-                    </td>
-                  </tr>
-                );
-              })}
+              <tr>
+                <th scope="row" title="G-code axis letter">
+                  Letter
+                </th>
+                {axes.map((k) => (
+                  <td key={k}>
+                    <input
+                      className="text letter"
+                      aria-label={`${AXIS_META[k].label} letter`}
+                      value={m[k]?.letter ?? ''}
+                      maxLength={1}
+                      onChange={(e) => {
+                        const v = e.target.value.toUpperCase().replace(/[^A-Z]/g, '');
+                        if (v) setAxis(k, { letter: v }, 'letter');
+                      }}
+                    />
+                  </td>
+                ))}
+              </tr>
+              <AxisRow
+                label="Vmax"
+                unit="u/min"
+                title="Max velocity [machine units/min]"
+                axes={axes}
+                m={m}
+                field="max_velocity"
+                gt={0}
+                step={100}
+                onSet={setAxis}
+              />
+              <AxisRow
+                label="Amax"
+                unit="u/s²"
+                title="Max acceleration [machine units/s²]"
+                axes={axes}
+                m={m}
+                field="max_accel"
+                gt={0}
+                step={10}
+                onSet={setAxis}
+              />
+              <AxisRow
+                label="Min"
+                title="Soft limit min [machine units], blank = none"
+                axes={axes}
+                m={m}
+                field="min"
+                nullable
+                onSet={setAxis}
+              />
+              <AxisRow
+                label="Max"
+                title="Soft limit max [machine units], blank = none"
+                axes={axes}
+                m={m}
+                field="max"
+                nullable
+                onSet={setAxis}
+              />
+              <AxisRow
+                label="Scale"
+                title="Machine units per mm (linear) or per degree (rotary)"
+                axes={axes}
+                m={m}
+                field="scale"
+                step={0.1}
+                onSet={setAxis}
+              />
+              <tr>
+                <th scope="row">Invert</th>
+                {axes.map((k) => (
+                  <td key={k} className="center">
+                    <input
+                      type="checkbox"
+                      aria-label={`${AXIS_META[k].label} invert`}
+                      checked={m[k]?.invert ?? false}
+                      onChange={(e) => setAxis(k, { invert: e.target.checked }, 'inv')}
+                    />
+                  </td>
+                ))}
+              </tr>
             </tbody>
           </table>
         </div>
-        <p className="muted small">Velocity in units/min, acceleration in units/s². Scale: machine units per mm (linear) or per degree (rotary). Leave limits blank for none.</p>
+        <p className="muted small">
+          Velocity in machine units/min, acceleration in units/s². Scale: machine units per mm (linear) or per degree
+          (rotary). Leave limits blank for none.
+        </p>
       </Section>
 
       <Section title="Kinematics">
-        <NumberField label="Carriage offset" unit="mm" value={m.carriage_offset} step={10} hint="Machine carriage coordinate of the vessel mid-plane (z = 0)" onCommit={(v) => set({ carriage_offset: v }, 'co')} />
-        <NumberField label="Crossfeed zero radius" unit="mm" value={m.crossfeed_zero_radius} step={1} hint="Eye distance from mandrel axis when crossfeed reads 0" onCommit={(v) => set({ crossfeed_zero_radius: v }, 'czr')} />
-        <NumberField label="Eye clearance" unit="mm" value={m.eye_clearance} gt={0} step={1} hint="Eye clearance from the wound surface" onCommit={(v) => set({ eye_clearance: v }, 'ec')} />
-        <NumberField label="Fibre speed" unit="mm/s" value={m.fiber_speed} gt={0} step={10} hint={`= ${(m.fiber_speed * 0.06).toFixed(1)} m/min target delivery speed`} onCommit={(v) => set({ fiber_speed: v }, 'fs')} />
-        <NumberField label="Samples per pass" unit="pts" value={m.samples_per_pass} min={20} max={2000} integer step={10} hint="Path resolution per traverse (20 – 2000)" onCommit={(v) => set({ samples_per_pass: v }, 'spp')} />
+        <NumberField
+          label="Carriage offset"
+          unit="mm"
+          value={m.carriage_offset}
+          step={10}
+          hint="Machine carriage coordinate of the vessel mid-plane (z = 0)"
+          onCommit={(v) => set({ carriage_offset: v }, 'co')}
+        />
+        <NumberField
+          label="Crossfeed zero radius"
+          unit="mm"
+          value={m.crossfeed_zero_radius}
+          step={1}
+          hint="Eye distance from mandrel axis when crossfeed reads 0"
+          onCommit={(v) => set({ crossfeed_zero_radius: v }, 'czr')}
+        />
+        <NumberField
+          label="Eye clearance"
+          unit="mm"
+          value={m.eye_clearance}
+          gt={0}
+          step={1}
+          hint="Eye clearance from the wound surface"
+          onCommit={(v) => set({ eye_clearance: v }, 'ec')}
+        />
+        <NumberField
+          label="Fibre speed"
+          unit="mm/s"
+          value={m.fiber_speed}
+          gt={0}
+          step={10}
+          hint={`= ${(m.fiber_speed * 0.06).toFixed(1)} m/min target delivery speed`}
+          onCommit={(v) => set({ fiber_speed: v }, 'fs')}
+        />
+        <NumberField
+          label="Samples per pass"
+          unit="pts"
+          value={m.samples_per_pass}
+          min={20}
+          max={2000}
+          integer
+          step={10}
+          hint="Path resolution per traverse (20 – 2000)"
+          onCommit={(v) => set({ samples_per_pass: v }, 'spp')}
+        />
       </Section>
 
       <Section title="Output">
@@ -203,7 +304,14 @@ export function MachinePanel() {
           onChange={(v) => set({ tension_output: v }, 'to')}
         />
         {m.tension_output !== 'none' ? (
-          <NumberField label="Tension scale" unit="/N" value={m.tension_scale} step={0.1} hint="Output units per newton of tension" onCommit={(v) => set({ tension_scale: v }, 'ts')} />
+          <NumberField
+            label="Tension scale"
+            unit="/N"
+            value={m.tension_scale}
+            step={0.1}
+            hint="Output units per newton of tension"
+            onCommit={(v) => set({ tension_scale: v }, 'ts')}
+          />
         ) : null}
         <SelectField<RotaryReset>
           label="Rotary reset"
@@ -217,11 +325,61 @@ export function MachinePanel() {
           hint="Re-zero the mandrel coordinate (G92) to limit numeric growth"
         />
         <Field label="Pause between layers">
-          <Switch checked={m.pause_between_layers} onChange={(v) => set({ pause_between_layers: v }, 'pbl')} label={m.pause_between_layers ? 'M0 pause' : 'Continuous'} />
+          <Switch
+            checked={m.pause_between_layers}
+            onChange={(v) => set({ pause_between_layers: v }, 'pbl')}
+            label={m.pause_between_layers ? 'M0 pause' : 'Continuous'}
+          />
         </Field>
       </Section>
 
       {result ? <ChecksList checks={checksForStep(result.checks, 'machine')} title="Machine checks" /> : null}
     </>
+  );
+}
+
+function AxisRow({
+  label,
+  unit,
+  title,
+  axes,
+  m,
+  field,
+  gt,
+  step,
+  nullable,
+  onSet,
+}: {
+  label: string;
+  unit?: string;
+  title: string;
+  axes: AxisKey[];
+  m: MachineSpec;
+  field: 'max_velocity' | 'max_accel' | 'min' | 'max' | 'scale';
+  gt?: number;
+  step?: number;
+  nullable?: boolean;
+  onSet: (k: AxisKey, patch: Partial<MachineAxis>, key: string) => void;
+}) {
+  return (
+    <tr>
+      <th scope="row" title={title}>
+        {label}
+        {unit ? <span className="muted small"> {unit}</span> : null}
+      </th>
+      {axes.map((k) => (
+        <td key={k}>
+          <NumberInput
+            ariaLabel={`${AXIS_META[k].label} ${title}`}
+            value={m[k]?.[field] ?? null}
+            gt={gt}
+            step={step}
+            placeholder={nullable ? '–' : undefined}
+            onClear={nullable ? () => onSet(k, { [field]: null }, field) : undefined}
+            onCommit={(v) => onSet(k, { [field]: v }, field)}
+          />
+        </td>
+      ))}
+    </tr>
   );
 }

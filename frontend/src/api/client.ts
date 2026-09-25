@@ -115,17 +115,14 @@ export const api = {
   machines: (s?: AbortSignal) => request<MachinePreset[]>('GET', '/machines', undefined, s),
   examples: (s?: AbortSignal) => request<ExampleProject[]>('GET', '/examples', undefined, s),
   analyze: (p: Project, s?: AbortSignal) => request<AnalysisResult>('POST', '/analyze', p, s),
-  suggestLayup: (p: Project, s?: AbortSignal) =>
-    request<SuggestLayupResponse>('POST', '/suggest-layup', p, s),
+  suggestLayup: (p: Project, s?: AbortSignal) => request<SuggestLayupResponse>('POST', '/suggest-layup', p, s),
   path: (r: LayerRequest, s?: AbortSignal) => request<PathResult>('POST', '/path', r, s),
-  simulate: (r: LayerRequest, s?: AbortSignal) =>
-    request<SimulationResult>('POST', '/simulate', r, s),
+  simulate: (r: LayerRequest, s?: AbortSignal) => request<SimulationResult>('POST', '/simulate', r, s),
   gcode: (project: Project, layer_ids: string[] | null, s?: AbortSignal) =>
     request<GcodeResponse>('POST', '/gcode', { project, layer_ids }, s),
   traveller: (p: Project, s?: AbortSignal) => request<TravellerResponse>('POST', '/traveller', p, s),
   listProjects: (s?: AbortSignal) => request<ProjectListEntry[]>('GET', '/projects', undefined, s),
-  getProject: (name: string, s?: AbortSignal) =>
-    request<Project>('GET', `/projects/${enc(name)}`, undefined, s),
+  getProject: (name: string, s?: AbortSignal) => request<Project>('GET', `/projects/${enc(name)}`, undefined, s),
   saveProject: (name: string, p: Project) => request<OkResponse>('PUT', `/projects/${enc(name)}`, p),
   deleteProject: (name: string) => request<OkResponse>('DELETE', `/projects/${enc(name)}`),
 };

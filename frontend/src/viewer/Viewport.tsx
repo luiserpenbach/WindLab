@@ -16,9 +16,12 @@ export function Viewport() {
   const host = useRef<HTMLDivElement>(null);
   const viewer = useRef<VesselViewer | null>(null);
   const { project } = useProject();
-  const { result, loading } = useAnalysis();
+  const { result, resultProject, loading } = useAnalysis();
   const ui = useUi();
   const simMode = ui.step === 'simulate';
+  // Geometry must match the analysis result; before the first result the
+  // current inputs drive a rough preview.
+  const geomSrc = result && resultProject ? resultProject : project;
 
   useEffect(() => {
     if (!host.current) return;
@@ -56,16 +59,17 @@ export function Viewport() {
   }, [ui.view]);
 
   useEffect(() => {
-    viewer.current?.setVessel({
-      analysis: result,
-      liner: project.liner,
-      layers: project.layers,
-    });
-  }, [result, project.liner, project.layers]);
+    viewer.current?.setVessel({ analysis: result, liner: geomSrc.liner, layers: geomSrc.layers });
+  }, [result, geomSrc.liner, geomSrc.layers]);
 
   useEffect(() => {
-    viewer.current?.setSelectedLayer(ui.step === 'layup' || simMode ? ui.selectedLayerId : null);
-  }, [ui.selectedLayerId, ui.step, simMode]);
+    viewer.current?.setSelectedLayer(ui.step === 'layup' ? ui.selectedLayerId : null);
+  }, [ui.selectedLayerId, ui.step]);
+
+  useEffect(() => {
+    // While simulating a layer, show the vessel as it is before that layer is wound.
+    viewer.current?.setLayerCutoff(simMode ? (ui.sim?.layer_id ?? ui.path?.layer_id ?? null) : null);
+  }, [simMode, ui.sim, ui.path, result]);
 
   useEffect(() => {
     viewer.current?.setPath(simMode ? ui.path : null);

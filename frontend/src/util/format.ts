@@ -71,5 +71,10 @@ export function downloadText(filename: string, text: string, mime = 'text/plain'
 }
 
 export function safeFilename(s: string): string {
-  return s.trim().replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'project';
+  return (
+    s
+      .trim()
+      .replace(/[^\w.-]+/g, '_')
+      .replace(/^_+|_+$/g, '') || 'project'
+  );
 }

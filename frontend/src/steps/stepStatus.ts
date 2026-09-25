@@ -3,19 +3,29 @@ import type { StepId } from '../state/uiStore';
 import { worstStatus } from '../state/analysis';
 
 /**
- * Check ids are not enumerated in the API contract, so checks are routed to
- * workflow steps by keyword. Unmatched checks count towards "analysis".
+ * Check ids are namespaced by the backend (core/design.py): `geo.*`,
+ * `layer.<id>`, `layup.*`, `burst*`, `sr.*`, `af.*`, `liner.*`, `fatigue`,
+ * `dome.*`. Known prefixes are routed explicitly; anything else falls back to
+ * keyword matching, then to "analysis".
  */
-const ROUTES: [StepId, RegExp][] = [
-  ['machine', /machine|axis|axes|carriage|crossfeed|mandrel|eye|velocity|accel|travel|soft.?limit|clearance/i],
-  ['materials', /material|fib(re|er)_?(type|id)|resin|vf|volume.?fraction|translation/i],
-  ['layup', /layer|layup|pattern|coverage|turnaround|dwell|band|hoop_?(pass|drop)|slip|friction|geodesic/i],
-  ['vessel', /liner|geometry|dome|boss|opening|wall|shaft/i],
+const PREFIX: [StepId, RegExp][] = [
+  ['vessel', /^(geo|liner|af|fatigue)(\.|$)/],
+  ['layup', /^(layer|layup|dome|pattern)(\.|$)/],
+  ['materials', /^(mat|material|composite)(\.|$)/],
+  ['machine', /^(machine|mach|axis|kin)(\.|$)/],
+  ['analysis', /^(burst|sr|mass)(\.|$)/],
+];
+const KEYWORDS: [StepId, RegExp][] = [
+  ['machine', /machine|axis|axes|carriage|crossfeed|velocity|accel|soft.?limit/i],
+  ['materials', /material|resin|volume.?fraction|translation/i],
+  ['layup', /layer|layup|pattern|coverage|turnaround|dwell|band/i],
+  ['vessel', /liner|geometry|boss|opening|shaft/i],
 ];
 
 export function stepOfCheck(c: Check): StepId {
+  for (const [step, re] of PREFIX) if (re.test(c.id)) return step;
   const key = `${c.id} ${c.label}`;
-  for (const [step, re] of ROUTES) if (re.test(key)) return step;
+  for (const [step, re] of KEYWORDS) if (re.test(key)) return step;
   return 'analysis';
 }
 
@@ -23,19 +33,20 @@ export function checksForStep(checks: Check[], step: StepId): Check[] {
   return checks.filter((c) => stepOfCheck(c) === step);
 }
 
-export function stepStatus(
-  step: StepId,
-  result: AnalysisResult | null,
-  sim: SimulationResult | null,
-): Status | null {
+export function stepStatus(step: StepId, result: AnalysisResult | null, sim: SimulationResult | null): Status | null {
   if (!result) return null;
   const checks = result.checks;
   switch (step) {
     case 'vessel':
-    case 'materials':
-    case 'machine': {
+    case 'materials': {
       const s = worstStatus(checksForStep(checks, step));
       return s ?? 'ok';
+    }
+    case 'machine': {
+      // /api/analyze has no machine checks today; machine limits come from the simulation.
+      const statuses: Status[] = checksForStep(checks, 'machine').map((c) => c.status);
+      if (sim && !sim.limits_ok) statuses.push('fail');
+      return worstStatus(statuses) ?? (sim ? 'ok' : null);
     }
     case 'layup': {
       const statuses: Status[] = checksForStep(checks, 'layup').map((c) => c.status);

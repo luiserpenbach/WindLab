@@ -33,7 +33,8 @@ export function SimulatePanel() {
     setBusy(true);
     setError(null);
     playback.set({ playing: false });
-    const req = { project, layer_id: layerId };
+    // ~5000 frames keeps playback smooth; the backend default (20000) is overkill for display.
+    const req = { project, layer_id: layerId, max_points: 5000 };
     try {
       const [p, s] = await Promise.all([api.path(req, c.signal), api.simulate(req, c.signal)]);
       if (c.signal.aborted) return;
@@ -72,12 +73,22 @@ export function SimulatePanel() {
         </Field>
         <div className="toolbar">
           <i className="swatch" style={{ background: sel ? colors.get(sel.id) : undefined }} />
-          <Button icon="refresh" size="sm" variant={stale ? 'primary' : 'default'} disabled={!sel || busy} onClick={() => sel && run(sel.id)}>
+          <Button
+            icon="refresh"
+            size="sm"
+            variant={stale ? 'primary' : 'default'}
+            disabled={!sel || busy}
+            onClick={() => sel && run(sel.id)}
+          >
             {stale ? 'Re-run (project changed)' : 'Re-run'}
           </Button>
           {busy ? <Spinner size={12} label="Simulating" /> : null}
           <span style={{ flex: 1 }} />
-          {path ? <span className="muted small">{path.points.length.toLocaleString()} pts · {path.circuit_breaks.length} circuits</span> : null}
+          {path ? (
+            <span className="muted small">
+              {path.points.length.toLocaleString()} pts · {path.circuit_breaks.length} circuits
+            </span>
+          ) : null}
         </div>
         {error ? <Banner kind="fail">{error}</Banner> : null}
       </Section>
@@ -113,7 +124,13 @@ function PlaybackControls({ sim }: { sim: SimulationResult }) {
   return (
     <div className="playback">
       <div className="pb-row">
-        <Button icon="rewind" size="sm" variant="ghost" aria-label="Rewind" onClick={() => playback.set({ t: 0, playing: false })} />
+        <Button
+          icon="rewind"
+          size="sm"
+          variant="ghost"
+          aria-label="Rewind"
+          onClick={() => playback.set({ t: 0, playing: false })}
+        />
         <Button
           icon={pb.playing ? 'pause' : 'play'}
           size="sm"
@@ -157,10 +174,24 @@ function AxisReadout({ sim }: { sim: SimulationResult }) {
   const f = sim.frames;
   const i = frameIndexAt(f.t, pb.t);
   const rows: [string, string, number | undefined, string, string?][] = [
-    [m.carriage.letter, 'Carriage (z)', f.carriage[i], 'mm', `machine ${sig((f.carriage[i] ?? 0) + m.carriage_offset, 5)}`],
-    [m.crossfeed.letter, 'Crossfeed (r)', f.crossfeed[i], 'mm', `machine ${sig((f.crossfeed[i] ?? 0) - m.crossfeed_zero_radius, 5)}`],
+    [
+      m.carriage.letter,
+      'Carriage (z)',
+      f.carriage[i],
+      'mm',
+      `machine ${sig((f.carriage[i] ?? 0) + m.carriage_offset, 5)}`,
+    ],
+    [
+      m.crossfeed.letter,
+      'Crossfeed (r)',
+      f.crossfeed[i],
+      'mm',
+      `machine ${sig((f.crossfeed[i] ?? 0) - m.crossfeed_zero_radius, 5)}`,
+    ],
     [m.mandrel.letter, 'Mandrel', f.mandrel[i], '°'],
-    ...(m.axes_count === 4 && m.eye ? ([[m.eye.letter, 'Eye', f.eye[i], '°']] as [string, string, number | undefined, string][]) : []),
+    ...(m.axes_count === 4 && m.eye
+      ? ([[m.eye.letter, 'Eye', f.eye[i], '°']] as [string, string, number | undefined, string][])
+      : []),
     ['L', 'Free fibre', f.free_length[i], 'mm'],
   ];
   return (
@@ -207,17 +238,29 @@ function decimate(x: number[], y: number[], n = 1200): { x: number[]; y: number[
   return { x: ox, y: oy };
 }
 
-function useThrottledTime(hz = 12): number {
-  const pb = usePlayback();
-  const [t, setT] = useState(pb.t);
-  const last = useRef(0);
+/** Playback time sampled at `hz` so charts don't re-render on every animation frame. */
+function useThrottledTime(hz = 10): number {
+  const [t, setT] = useState(() => playback.get().t);
   useEffect(() => {
-    const now = performance.now();
-    if (!pb.playing || now - last.current > 1000 / hz) {
-      last.current = now;
-      setT(pb.t);
-    }
-  }, [pb.t, pb.playing, hz]);
+    let last = 0;
+    let timer = 0;
+    const unsub = playback.subscribe(() => {
+      const s = playback.get();
+      const now = performance.now();
+      window.clearTimeout(timer);
+      if (!s.playing || now - last > 1000 / hz) {
+        last = now;
+        setT(s.t);
+      } else {
+        // make sure the final position is shown
+        timer = window.setTimeout(() => setT(playback.get().t), 1000 / hz);
+      }
+    });
+    return () => {
+      unsub();
+      window.clearTimeout(timer);
+    };
+  }, [hz]);
   return t;
 }
 
@@ -228,13 +271,22 @@ export function SimulateBottom() {
   const charts = useMemo(() => {
     if (!sim) return null;
     const f = sim.frames;
-    const mk = (id: string, name: string, y: number[], color: string): Series => ({ id, name, ...decimate(f.t, y), color });
+    const mk = (id: string, name: string, y: number[], color: string): Series => ({
+      id,
+      name,
+      ...decimate(f.t, y),
+      color,
+    });
     return {
-      lin: [mk('carriage', `Carriage ${project.machine.carriage.letter}`, f.carriage, 'var(--series-1)'), mk('crossfeed', `Crossfeed ${project.machine.crossfeed.letter}`, f.crossfeed, 'var(--series-2)')],
-      rot: [
-        mk('mandrel', `Mandrel ${project.machine.mandrel.letter}`, f.mandrel, 'var(--series-3)'),
+      lin: [
+        mk('carriage', `Carriage ${project.machine.carriage.letter}`, f.carriage, 'var(--series-1)'),
+        mk('crossfeed', `Crossfeed ${project.machine.crossfeed.letter}`, f.crossfeed, 'var(--series-2)'),
       ],
-      eye: project.machine.axes_count === 4 ? [mk('eye', `Eye ${project.machine.eye?.letter ?? 'B'}`, f.eye, 'var(--series-7)')] : [],
+      rot: [mk('mandrel', `Mandrel ${project.machine.mandrel.letter}`, f.mandrel, 'var(--series-3)')],
+      eye:
+        project.machine.axes_count === 4
+          ? [mk('eye', `Eye ${project.machine.eye?.letter ?? 'B'}`, f.eye, 'var(--series-7)')]
+          : [],
       free: [mk('free', 'Free fibre length', f.free_length, 'var(--series-5)')],
     };
   }, [sim, project.machine]);
@@ -242,12 +294,49 @@ export function SimulateBottom() {
   const vl = [{ value: t, color: 'var(--accent)' }];
   return (
     <div className="bottom-grid four">
-      <LineChart title="Linear axes" series={charts.lin} xLabel="t" xUnit="s" yLabel="Position" yUnit="mm" height={200} vlines={vl} />
-      <LineChart title="Mandrel angle" series={charts.rot} xLabel="t" xUnit="s" yLabel="A" yUnit="°" height={200} vlines={vl} />
+      <LineChart
+        title="Linear axes"
+        series={charts.lin}
+        xLabel="t"
+        xUnit="s"
+        yLabel="Position"
+        yUnit="mm"
+        height={200}
+        vlines={vl}
+      />
+      <LineChart
+        title="Mandrel angle"
+        series={charts.rot}
+        xLabel="t"
+        xUnit="s"
+        yLabel="A"
+        yUnit="°"
+        height={200}
+        vlines={vl}
+      />
       {charts.eye.length ? (
-        <LineChart title="Eye angle" series={charts.eye} xLabel="t" xUnit="s" yLabel="B" yUnit="°" height={200} vlines={vl} />
+        <LineChart
+          title="Eye angle"
+          series={charts.eye}
+          xLabel="t"
+          xUnit="s"
+          yLabel="B"
+          yUnit="°"
+          height={200}
+          vlines={vl}
+        />
       ) : null}
-      <LineChart title="Free fibre length" series={charts.free} xLabel="t" xUnit="s" yLabel="L" yUnit="mm" height={200} vlines={vl} yZero />
+      <LineChart
+        title="Free fibre length"
+        series={charts.free}
+        xLabel="t"
+        xUnit="s"
+        yLabel="L"
+        yUnit="mm"
+        height={200}
+        vlines={vl}
+        yZero
+      />
     </div>
   );
 }

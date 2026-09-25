@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import { api, errorMessage, isAbort } from '../api/client';
 import type {
   AnalysisResult,
+  Project,
   Check,
   ExampleProject,
   MachinePreset,
@@ -14,6 +15,8 @@ import { useProject } from './projectStore';
 interface AnalysisState {
   /** Last successful result (kept while a newer request fails). */
   result: AnalysisResult | null;
+  /** The project `result` was computed from (geometry must match the result). */
+  resultProject: Project | null;
   loading: boolean;
   error: string | null;
   /** True when `result` was computed from an older project than the current one. */
@@ -27,6 +30,7 @@ const DEBOUNCE_MS = 400;
 export function AnalysisProvider({ children }: { children: ReactNode }) {
   const { project } = useProject();
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [resultProject, setResultProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
@@ -45,6 +49,7 @@ export function AnalysisProvider({ children }: { children: ReactNode }) {
         .then((r) => {
           if (c.signal.aborted) return;
           setResult(r);
+          setResultProject(project);
           setError(null);
           setStale(false);
         })
@@ -62,8 +67,8 @@ export function AnalysisProvider({ children }: { children: ReactNode }) {
   useEffect(() => () => ctrl.current?.abort(), []);
 
   const value = useMemo<AnalysisState>(
-    () => ({ result, loading, error, stale, retry: () => setNonce((n) => n + 1) }),
-    [result, loading, error, stale],
+    () => ({ result, resultProject, loading, error, stale, retry: () => setNonce((n) => n + 1) }),
+    [result, resultProject, loading, error, stale],
   );
   return <AnalysisCtx.Provider value={value}>{children}</AnalysisCtx.Provider>;
 }
@@ -91,6 +96,8 @@ interface CatalogState {
   materials: MaterialsResponse | null;
   machines: MachinePreset[];
   examples: ExampleProject[];
+  /** Examples take a few seconds the first time (backend sizes the layups). */
+  examplesLoading: boolean;
   error: string | null;
   reload: () => void;
 }
@@ -100,11 +107,13 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   const [materials, setMaterials] = useState<MaterialsResponse | null>(null);
   const [machines, setMachines] = useState<MachinePreset[]>([]);
   const [examples, setExamples] = useState<ExampleProject[]>([]);
+  const [examplesLoading, setExamplesLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
     const c = new AbortController();
+    setExamplesLoading(true);
     const errs: string[] = [];
     const note = (what: string) => (e: unknown) => {
       if (isAbort(e)) return;
@@ -114,13 +123,18 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     setError(null);
     api.materials(c.signal).then(setMaterials, note('materials'));
     api.machines(c.signal).then(setMachines, note('machines'));
-    api.examples(c.signal).then(setExamples, note('examples'));
+    api
+      .examples(c.signal)
+      .then(setExamples, note('examples'))
+      .finally(() => {
+        if (!c.signal.aborted) setExamplesLoading(false);
+      });
     return () => c.abort();
   }, [nonce]);
 
   const value = useMemo<CatalogState>(
-    () => ({ materials, machines, examples, error, reload: () => setNonce((n) => n + 1) }),
-    [materials, machines, examples, error],
+    () => ({ materials, machines, examples, examplesLoading, error, reload: () => setNonce((n) => n + 1) }),
+    [materials, machines, examples, examplesLoading, error],
   );
   return <CatalogCtx.Provider value={value}>{children}</CatalogCtx.Provider>;
 }

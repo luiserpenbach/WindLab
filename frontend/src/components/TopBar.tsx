@@ -18,7 +18,7 @@ function fmtModified(m: string | number): string {
 export function TopBar() {
   const { project, update, load, undo, redo, canUndo, canRedo } = useProject();
   const { result, loading } = useAnalysis();
-  const { examples } = useCatalog();
+  const { examples, examplesLoading } = useCatalog();
   const { resolvedTheme, cycleTheme } = useUi();
   const [openDlg, setOpenDlg] = useState(false);
   const [confirmNew, setConfirmNew] = useState(false);
@@ -70,7 +70,12 @@ export function TopBar() {
       <div className="brand" aria-label="WindLab">
         <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
           <rect width="32" height="32" rx="7" fill="var(--accent)" />
-          <path d="M6 16c0-4 3-6 6-6h8c3 0 6 2 6 6s-3 6-6 6h-8c-3 0-6-2-6-6z" fill="none" stroke="#fff" strokeWidth="2" />
+          <path
+            d="M6 16c0-4 3-6 6-6h8c3 0 6 2 6 6s-3 6-6 6h-8c-3 0-6-2-6-6z"
+            fill="none"
+            stroke="#fff"
+            strokeWidth="2"
+          />
           <path d="M11 10l10 12M21 10L11 22" stroke="#cfe3ff" strokeWidth="1.6" />
         </svg>
         <span>WindLab</span>
@@ -86,7 +91,12 @@ export function TopBar() {
         <Button icon="file" size="sm" onClick={() => setConfirmNew(true)} title="New project">
           New
         </Button>
-        <Button icon="folder" size="sm" onClick={() => setOpenDlg(true)} title="Open a project from the server or a JSON file">
+        <Button
+          icon="folder"
+          size="sm"
+          onClick={() => setOpenDlg(true)}
+          title="Open a project from the server or a JSON file"
+        >
           Open
         </Button>
         <Button icon="save" size="sm" onClick={save} disabled={saving} title="Save to server (Ctrl+S)">
@@ -96,7 +106,9 @@ export function TopBar() {
           icon="download"
           size="sm"
           title="Download the project as JSON"
-          onClick={() => downloadText(`${safeFilename(project.name)}.json`, JSON.stringify(project, null, 2), 'application/json')}
+          onClick={() =>
+            downloadText(`${safeFilename(project.name)}.json`, JSON.stringify(project, null, 2), 'application/json')
+          }
         >
           Export
         </Button>
@@ -104,6 +116,8 @@ export function TopBar() {
         <select
           className="select select-sm"
           aria-label="Load example project"
+          aria-busy={examplesLoading}
+          disabled={examplesLoading && !examples.length}
           value=""
           onChange={(e) => {
             const ex = examples.find((x) => x.id === e.target.value);
@@ -115,7 +129,7 @@ export function TopBar() {
           }}
         >
           <option value="" disabled>
-            Examples…
+            {examplesLoading ? 'Loading examples…' : examples.length ? 'Examples…' : 'No examples'}
           </option>
           {examples.map((x) => (
             <option key={x.id} value={x.id}>
@@ -124,8 +138,24 @@ export function TopBar() {
           ))}
         </select>
         <span className="sep" />
-        <Button icon="undo" size="sm" variant="ghost" onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)" aria-label="Undo" />
-        <Button icon="redo" size="sm" variant="ghost" onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo" />
+        <Button
+          icon="undo"
+          size="sm"
+          variant="ghost"
+          onClick={undo}
+          disabled={!canUndo}
+          title="Undo (Ctrl+Z)"
+          aria-label="Undo"
+        />
+        <Button
+          icon="redo"
+          size="sm"
+          variant="ghost"
+          onClick={redo}
+          disabled={!canRedo}
+          title="Redo (Ctrl+Shift+Z)"
+          aria-label="Redo"
+        />
       </nav>
       <div className="topbar-right">
         {flash ? (
@@ -174,7 +204,10 @@ export function TopBar() {
           </>
         }
       >
-        <p>Start a new project with default liner, materials, a two-layer layup and the default machine? The current project can be restored with Undo.</p>
+        <p>
+          Start a new project with default liner, materials, a two-layer layup and the default machine? The current
+          project can be restored with Undo.
+        </p>
       </Modal>
 
       <OpenDialog
@@ -189,7 +222,15 @@ export function TopBar() {
   );
 }
 
-function OpenDialog({ open, onClose, onLoaded }: { open: boolean; onClose: () => void; onLoaded: (name: string) => void }) {
+function OpenDialog({
+  open,
+  onClose,
+  onLoaded,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onLoaded: (name: string) => void;
+}) {
   const { load } = useProject();
   const [list, setList] = useState<ProjectListEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -292,7 +333,13 @@ function OpenDialog({ open, onClose, onLoaded }: { open: boolean; onClose: () =>
                 <span className="open-name">{p.name}</span>
                 <span className="open-date">{fmtModified(p.modified)}</span>
               </button>
-              <Button size="sm" variant="ghost" icon="trash" aria-label={`Delete ${p.name}`} onClick={() => remove(p.name)} />
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="trash"
+                aria-label={`Delete ${p.name}`}
+                onClick={() => remove(p.name)}
+              />
             </li>
           ))}
         </ul>

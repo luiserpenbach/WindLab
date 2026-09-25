@@ -1,12 +1,4 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { PathResult, SimulationResult } from '../api/types';
 
 export type StepId = 'vessel' | 'materials' | 'layup' | 'analysis' | 'machine' | 'simulate' | 'export';
@@ -71,7 +63,11 @@ function systemDark(): boolean {
 
 export function UiProvider({ children }: { children: ReactNode }) {
   const [step, setStepState] = useState<StepId>(() =>
-    readLS('windlab.step', STEPS.map((s) => s.id), 'vessel'),
+    readLS(
+      'windlab.step',
+      STEPS.map((s) => s.id),
+      'vessel',
+    ),
   );
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemePref>(() =>

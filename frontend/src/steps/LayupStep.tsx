@@ -38,11 +38,16 @@ export function LayupPanel() {
   const [sel, setSel] = useSelectedLayer();
   const [dragId, setDragId] = useState<string | null>(null);
   const [overIdx, setOverIdx] = useState<number | null>(null);
-  const [suggest, setSuggest] = useState<{ busy: boolean; data: SuggestLayupResponse | null; error: string | null } | null>(null);
+  const [suggest, setSuggest] = useState<{
+    busy: boolean;
+    data: SuggestLayupResponse | null;
+    error: string | null;
+  } | null>(null);
   const colors = layerColors(project.layers);
   const layers = project.layers;
 
-  const setLayers = (fn: (ls: Layer[]) => Layer[], key?: string) => update((p) => ({ ...p, layers: fn(p.layers) }), key);
+  const setLayers = (fn: (ls: Layer[]) => Layer[], key?: string) =>
+    update((p) => ({ ...p, layers: fn(p.layers) }), key);
 
   const add = (type: LayerType) => {
     const l = newLayer(type, layers);
@@ -117,7 +122,12 @@ export function LayupPanel() {
           Hoop
         </Button>
         <span style={{ flex: 1 }} />
-        <Button size="sm" icon="wand" onClick={runSuggest} title="Ask the backend for a layup that meets the requirements">
+        <Button
+          size="sm"
+          icon="wand"
+          onClick={runSuggest}
+          title="Ask the backend for a layup that meets the requirements"
+        >
           Suggest layup
         </Button>
       </div>
@@ -128,13 +138,16 @@ export function LayupPanel() {
         <table className="layer-table">
           <thead>
             <tr>
-              <th aria-label="Drag handle" />
-              <th>#</th>
-              <th>Layer</th>
-              <th className="num">Angle</th>
-              <th className="num">t [mm]</th>
-              <th className="num">Circ.</th>
-              <th aria-label="Actions" />
+              <th className="c-idx">#</th>
+              <th className="c-name">Layer</th>
+              <th className="num c-ang">Angle</th>
+              <th className="num c-t" title="Cured thickness in the cylinder">
+                t mm
+              </th>
+              <th className="num c-circ" title="Circuits">
+                Circ
+              </th>
+              <th className="c-act" aria-label="Reorder" />
             </tr>
           </thead>
           <tbody>
@@ -169,10 +182,9 @@ export function LayupPanel() {
                     setOverIdx(null);
                   }}
                 >
-                  <td className="grip" aria-hidden="true">
-                    <Icon name="grip" size={14} />
+                  <td className="muted grip" title="Drag to reorder">
+                    {i + 1}
                   </td>
-                  <td className="muted">{i + 1}</td>
                   <td>
                     <button
                       type="button"
@@ -188,7 +200,9 @@ export function LayupPanel() {
                     >
                       <i className="swatch" style={{ background: colors.get(l.id) }} />
                       <span>{l.id}</span>
-                      <span className={`type-badge t-${l.type}`}>{l.type === 'hoop' ? 'hoop' : 'helix'}</span>
+                      <span className={`type-badge t-${l.type}`} title={l.type}>
+                        {l.type === 'hoop' ? 'H' : 'X'}
+                      </span>
                       {r?.warnings.length ? (
                         <span className="warn-mark" title={r.warnings.join('\n')}>
                           <Icon name="alert" size={12} />
@@ -200,17 +214,27 @@ export function LayupPanel() {
                   <td className="num">{r ? sig(r.thickness, 3) : '–'}</td>
                   <td className="num">{r ? r.circuits : '–'}</td>
                   <td className="row-actions">
-                    <button type="button" aria-label={`Move ${l.id} up`} disabled={i === 0} onClick={(e) => { e.stopPropagation(); move(l.id, -1); }}>
+                    <button
+                      type="button"
+                      aria-label={`Move ${l.id} up`}
+                      disabled={i === 0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        move(l.id, -1);
+                      }}
+                    >
                       <Icon name="up" size={13} />
                     </button>
-                    <button type="button" aria-label={`Move ${l.id} down`} disabled={i === layers.length - 1} onClick={(e) => { e.stopPropagation(); move(l.id, 1); }}>
+                    <button
+                      type="button"
+                      aria-label={`Move ${l.id} down`}
+                      disabled={i === layers.length - 1}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        move(l.id, 1);
+                      }}
+                    >
                       <Icon name="down" size={13} />
-                    </button>
-                    <button type="button" aria-label={`Duplicate ${l.id}`} onClick={(e) => { e.stopPropagation(); duplicate(l.id); }}>
-                      <Icon name="copy" size={13} />
-                    </button>
-                    <button type="button" aria-label={`Delete ${l.id}`} className="danger" onClick={(e) => { e.stopPropagation(); remove(l.id); }}>
-                      <Icon name="trash" size={13} />
                     </button>
                   </td>
                 </tr>
@@ -220,13 +244,11 @@ export function LayupPanel() {
           <tfoot>
             <tr>
               <td />
-              <td />
-              <td className="muted">Total</td>
-              <td />
-              <td className="num">{sig(totals.t, 3)}</td>
-              <td className="num muted" colSpan={2}>
-                {fmtMass(totals.m)} · {fmtDuration(totals.time)}
+              <td className="muted" colSpan={2}>
+                Total · {fmtMass(totals.m)} · {fmtDuration(totals.time)}
               </td>
+              <td className="num">{sig(totals.t, 3)}</td>
+              <td colSpan={2} />
             </tr>
           </tfoot>
         </table>
@@ -245,6 +267,8 @@ export function LayupPanel() {
             setLayers((ls) => ls.map((l) => (l.id === sel.id ? { ...l, id } : l)));
             setSel(id);
           }}
+          onDuplicate={() => duplicate(sel.id)}
+          onDelete={() => remove(sel.id)}
         />
       ) : null}
 
@@ -291,7 +315,11 @@ export function LayupPanel() {
                   <span className={`type-badge t-${l.type}`}>{l.type}</span> <strong>{l.id}</strong>{' '}
                   <span className="muted">
                     {l.tows} tow · {l.band_width} mm band
-                    {l.type === 'hoop' ? ` · ${l.passes} passes` : l.turnaround_offset ? ` · +${l.turnaround_offset} mm turnaround` : ''}
+                    {l.type === 'hoop'
+                      ? ` · ${l.passes} passes`
+                      : l.turnaround_offset
+                        ? ` · +${l.turnaround_offset} mm turnaround`
+                        : ''}
                   </span>
                 </li>
               ))}
@@ -316,17 +344,44 @@ function LayerEditor({
   allIds,
   onChange,
   onRename,
+  onDuplicate,
+  onDelete,
 }: {
   layer: Layer;
   result: LayerResult | null;
   allIds: string[];
   onChange: (patch: Partial<Layer>, key: string) => void;
   onRename: (id: string) => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
 }) {
   const [idErr, setIdErr] = useState<string | null>(null);
   return (
     <>
-      <Section title={`Layer ${l.id}`}>
+      <Section
+        title={`Layer ${l.id}`}
+        actions={
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              icon="copy"
+              onClick={onDuplicate}
+              title="Duplicate layer"
+              aria-label={`Duplicate ${l.id}`}
+            />
+            <Button
+              size="sm"
+              variant="ghost"
+              icon="trash"
+              className="btn-danger"
+              onClick={onDelete}
+              title="Delete layer"
+              aria-label={`Delete ${l.id}`}
+            />
+          </>
+        }
+      >
         <Field label="Id" error={idErr}>
           <TextInput
             value={l.id}
@@ -351,9 +406,31 @@ function LayerEditor({
             onChange={(v) => onChange({ type: v }, 'type')}
           />
         </Field>
-        <NumberField label="Tows" unit="tows" value={l.tows} min={1} integer onCommit={(v) => onChange({ tows: v }, 'tows')} />
-        <NumberField label="Band width" unit="mm" value={l.band_width} gt={0} step={0.5} onCommit={(v) => onChange({ band_width: v }, 'bw')} />
-        <NumberField label="Tension" unit="N" value={l.tension} min={0} step={1} hint="Total band tension" onCommit={(v) => onChange({ tension: v }, 'tension')} />
+        <NumberField
+          label="Tows"
+          unit="tows"
+          value={l.tows}
+          min={1}
+          integer
+          onCommit={(v) => onChange({ tows: v }, 'tows')}
+        />
+        <NumberField
+          label="Band width"
+          unit="mm"
+          value={l.band_width}
+          gt={0}
+          step={0.5}
+          onCommit={(v) => onChange({ band_width: v }, 'bw')}
+        />
+        <NumberField
+          label="Tension"
+          unit="N"
+          value={l.tension}
+          min={0}
+          step={1}
+          hint="Total band tension"
+          onCommit={(v) => onChange({ tension: v }, 'tension')}
+        />
         {l.type === 'helical' ? (
           <>
             <NumberField
@@ -378,12 +455,41 @@ function LayerEditor({
           </>
         ) : (
           <>
-            <NumberField label="Passes" unit="passes" value={l.passes} min={1} integer hint="Each traverse deposits one band thickness" onCommit={(v) => onChange({ passes: v }, 'passes')} />
-            <NumberField label="End offset A" unit="mm" value={l.end_offset_a} min={0} step={1} hint="Drop-off from tangent line, end A" onCommit={(v) => onChange({ end_offset_a: v }, 'eoa')} />
-            <NumberField label="End offset B" unit="mm" value={l.end_offset_b} min={0} step={1} hint="Drop-off from tangent line, end B" onCommit={(v) => onChange({ end_offset_b: v }, 'eob')} />
+            <NumberField
+              label="Passes"
+              unit="passes"
+              value={l.passes}
+              min={1}
+              integer
+              hint="Each traverse deposits one band thickness"
+              onCommit={(v) => onChange({ passes: v }, 'passes')}
+            />
+            <NumberField
+              label="End offset A"
+              unit="mm"
+              value={l.end_offset_a}
+              min={0}
+              step={1}
+              hint="Drop-off from tangent line, end A"
+              onCommit={(v) => onChange({ end_offset_a: v }, 'eoa')}
+            />
+            <NumberField
+              label="End offset B"
+              unit="mm"
+              value={l.end_offset_b}
+              min={0}
+              step={1}
+              hint="Drop-off from tangent line, end B"
+              onCommit={(v) => onChange({ end_offset_b: v }, 'eob')}
+            />
           </>
         )}
-        <Field label="Thickness" hint={l.thickness_override == null ? 'Computed from band thickness' : 'Overrides the computed cured thickness'}>
+        <Field
+          label="Thickness"
+          hint={
+            l.thickness_override == null ? 'Computed from band thickness' : 'Overrides the computed cured thickness'
+          }
+        >
           <div className="inline">
             <Switch
               checked={l.thickness_override == null}
@@ -421,7 +527,9 @@ function LayerResultCard({ r }: { r: LayerResult }) {
     ['Winding angle', `${sig(r.angle, 4)}°`],
     ['Cured thickness', `${sig(r.thickness, 3)} mm`],
     ['Band thickness', `${sig(r.band_thickness, 3)} mm`],
-    ...(r.turnaround_radius != null ? ([['Turnaround radius', `${sig(r.turnaround_radius, 4)} mm`]] as [string, string][]) : []),
+    ...(r.turnaround_radius != null
+      ? ([['Turnaround radius', `${sig(r.turnaround_radius, 4)} mm`]] as [string, string][])
+      : []),
     ['Extent z', `${sig(r.z_start, 4)} … ${sig(r.z_end, 4)} mm`],
     ['Circuits', String(r.circuits)],
     ['Fibre length', `${sig(r.fiber_length, 4)} m`],
@@ -444,7 +552,10 @@ function LayerResultCard({ r }: { r: LayerResult }) {
   );
 }
 
-function samePattern(a: { n_bands: number; shift: number } | null | undefined, b: { n_bands: number; shift: number } | null | undefined) {
+function samePattern(
+  a: { n_bands: number; shift: number } | null | undefined,
+  b: { n_bands: number; shift: number } | null | undefined,
+) {
   return !!a && !!b && a.n_bands === b.n_bands && a.shift === b.shift;
 }
 
@@ -479,26 +590,56 @@ function PatternTable({
           }}
         />
         <span className="muted small">
-          {auto ? (active ? `Auto → ${active.n_bands} bands, shift ${active.shift}` : 'Best-scoring pattern is used') : `Pinned: ${layer.pattern!.n_bands} bands, shift ${layer.pattern!.shift}`}
+          {auto
+            ? active
+              ? `Auto → ${active.n_bands} bands, shift ${active.shift}`
+              : 'Best-scoring pattern is used'
+            : `Pinned: ${layer.pattern!.n_bands} bands, shift ${layer.pattern!.shift}`}
         </span>
       </div>
       {!auto ? (
         <div className="inline pattern-manual">
-          <NumberField label="Bands" unit="n" value={layer.pattern!.n_bands} min={1} integer onCommit={(v) => onPick({ ...layer.pattern!, n_bands: v })} />
-          <NumberField label="Shift" unit="k" value={layer.pattern!.shift} min={1} integer onCommit={(v) => onPick({ ...layer.pattern!, shift: v })} />
+          <NumberField
+            label="Bands"
+            unit="n"
+            value={layer.pattern!.n_bands}
+            min={1}
+            integer
+            onCommit={(v) => onPick({ ...layer.pattern!, n_bands: v })}
+          />
+          <NumberField
+            label="Shift"
+            unit="k"
+            value={layer.pattern!.shift}
+            min={1}
+            integer
+            onCommit={(v) => onPick({ ...layer.pattern!, shift: v })}
+          />
         </div>
       ) : null}
-      {pinnedMissing && result ? <Banner kind="warn">The pinned pattern is not among the feasible candidates.</Banner> : null}
+      {pinnedMissing && result ? (
+        <Banner kind="warn">The pinned pattern is not among the feasible candidates.</Banner>
+      ) : null}
       {cands.length ? (
         <div className="table-scroll">
           <table className="data-table pattern-table">
             <thead>
               <tr>
-                <th className="num" title="Circuits per layer">Bands</th>
-                <th className="num" title="Circuit advance k">Shift</th>
-                <th className="num" title="Circuits until a band lands adjacent to band 0">Pattern</th>
-                <th className="num" title="Dwell per turnaround">Dwell °</th>
-                <th className="num" title="Coverage (100 % exact, >100 % overlap)">Cover %</th>
+                <th className="num" title="Circuits per layer">
+                  Bands
+                </th>
+                <th className="num" title="Circuit advance k">
+                  Shift
+                </th>
+                <th className="num" title="Circuits until a band lands adjacent to band 0">
+                  Pattern
+                </th>
+                <th className="num" title="Dwell per turnaround">
+                  Dwell °
+                </th>
+                <th className="num" title="Coverage (100 % exact, >100 % overlap)">
+                  Cover %
+                </th>
                 <th title="Advance direction">Dir</th>
               </tr>
             </thead>
@@ -600,14 +741,31 @@ export function ThicknessChart({ height = 230, initialMode = 'stacked' }: { heig
     ys.forEach((y, k) => {
       for (let i = 0; i < z.length; i++) cum[i] += y[i];
       if (mode === 'stacked')
-        out.push({ id: lrs[k].id, name: `≤ ${lrs[k].id}`, x: z, y: [...cum], color: colors.get(lrs[k].id), width: 1.5, hideLegend: lrs.length > 10 });
+        out.push({
+          id: lrs[k].id,
+          name: `≤ ${lrs[k].id}`,
+          x: z,
+          y: [...cum],
+          color: colors.get(lrs[k].id),
+          width: 1.5,
+          hideLegend: lrs.length > 10,
+        });
     });
     if (mode === 'total') out.push({ id: 'total', name: 'Total', x: z, y: cum, color: 'var(--series-1)', fill: true });
     return out;
   }, [result, mode, colors]);
   return (
-    <div className="chart-with-tools">
-      <div className="chart-tools">
+    <LineChart
+      title="Composite thickness along z"
+      series={series}
+      xLabel="z"
+      xUnit="mm"
+      yLabel="t"
+      yUnit="mm"
+      height={height}
+      yZero
+      emptyText="No layer results yet"
+      tools={
         <Segmented<ThkMode>
           size="sm"
           ariaLabel="Thickness chart mode"
@@ -619,19 +777,8 @@ export function ThicknessChart({ height = 230, initialMode = 'stacked' }: { heig
           ]}
           onChange={setMode}
         />
-      </div>
-      <LineChart
-        title="Composite thickness along z"
-        series={series}
-        xLabel="z"
-        xUnit="mm"
-        yLabel="t"
-        yUnit="mm"
-        height={height}
-        yZero
-        emptyText="No layer results yet"
-      />
-    </div>
+      }
+    />
   );
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react';
 import { sig } from '../util/format';
 
 export interface Series {
@@ -53,6 +53,8 @@ export interface LineChartProps {
   /** Tooltip mode: interpolate at cursor x (monotonic x) or nearest point. */
   hover?: 'x' | 'nearest';
   emptyText?: string;
+  /** Extra controls shown at the right of the chart header. */
+  tools?: ReactNode;
 }
 
 const PAD = { l: 52, r: 14, t: 10, b: 34 };
@@ -129,6 +131,7 @@ export function LineChart({
   xFormat,
   hover = 'x',
   emptyText = 'No data',
+  tools,
 }: LineChartProps) {
   const wrap = useRef<HTMLDivElement>(null);
   const clipId = `clip${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
@@ -279,9 +282,12 @@ export function LineChart({
 
   return (
     <figure className="chart" ref={wrap}>
-      {title || legendItems.length > 1 ? (
+      {title || tools || legendItems.length > 1 ? (
         <figcaption className="chart-head">
-          {title ? <span className="chart-title">{title}</span> : <span />}
+          <div className="chart-head-row">
+            {title ? <span className="chart-title">{title}</span> : <span />}
+            {tools ? <div className="chart-tools">{tools}</div> : null}
+          </div>
           {legendItems.length > 1 ? (
             <ul className="legend">
               {legendItems.map((s) => (
@@ -344,7 +350,13 @@ export function LineChart({
               if (x1 <= x0) return null;
               return (
                 <g key={`b${i}`}>
-                  <rect x={x0} y={PAD.t} width={x1 - x0} height={plotH} className={`chart-band ${i % 2 ? 'alt' : ''}`} />
+                  <rect
+                    x={x0}
+                    y={PAD.t}
+                    width={x1 - x0}
+                    height={plotH}
+                    className={`chart-band ${i % 2 ? 'alt' : ''}`}
+                  />
                   {b.label && x1 - x0 > 30 ? (
                     <text x={(x0 + x1) / 2} y={PAD.t + 11} className="chart-band-label" textAnchor="middle">
                       {b.label}
@@ -399,7 +411,11 @@ export function LineChart({
                 <g key={`h${i}`} className="chart-ref">
                   <line x1={PAD.l} x2={PAD.l + plotW} y1={sy(h.value)} y2={sy(h.value)} stroke={h.color} />
                   {h.label ? (
-                    <text x={PAD.l + plotW - 4} y={sy(h.value) - 4} textAnchor="end">
+                    <text
+                      x={PAD.l + plotW - 4}
+                      y={sy(h.value) < PAD.t + 14 ? sy(h.value) + 12 : sy(h.value) - 4}
+                      textAnchor="end"
+                    >
                       {h.label}
                     </text>
                   ) : null}
@@ -416,7 +432,7 @@ export function LineChart({
                 </g>
               ))}
               {/* data */}
-              {paths.map(({ s, d, area }) =>
+              {paths.map(({ s, area }) =>
                 area ? <path key={`a${s.id}`} d={area} fill={s.color} className="chart-area" /> : null,
               )}
               {paths.map(({ s, d }) => (
@@ -436,7 +452,14 @@ export function LineChart({
                 .map((s) =>
                   s.x.map((xv, i) =>
                     Number.isFinite(xv) && Number.isFinite(s.y[i]) ? (
-                      <circle key={`${s.id}m${i}`} cx={sx(xv)} cy={sy(s.y[i])} r={3} fill={s.color} className="chart-marker" />
+                      <circle
+                        key={`${s.id}m${i}`}
+                        cx={sx(xv)}
+                        cy={sy(s.y[i])}
+                        r={3}
+                        fill={s.color}
+                        className="chart-marker"
+                      />
                     ) : null,
                   ),
                 )}

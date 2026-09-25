@@ -16,7 +16,7 @@ mass in g.
 | POST | `/api/path` | `LayerRequest` | `PathResult` (fibre path on the mandrel, 3D) |
 | POST | `/api/simulate` | `LayerRequest` | `SimulationResult` (machine axes over time) |
 | POST | `/api/gcode` | `GcodeRequest` | `{filename, gcode, lines, total_time, warnings}` |
-| POST | `/api/traveller` | `Project` | `{markdown, html}` shop-floor work instructions |
+| POST | `/api/traveller` | `Project` | `{markdown, html}` shop-floor work instructions (`html` is an unstyled fragment) |
 | GET | `/api/projects` | – | `[{name, modified}]` saved on the server |
 | GET | `/api/projects/{name}` | – | `Project` |
 | PUT | `/api/projects/{name}` | `Project` | `{ok: true}` |
@@ -28,9 +28,11 @@ turnaround radius larger than the cylinder radius).
 ## Material records
 
 ```ts
-Fiber  = {id, name, E: MPa, strength: MPa, elongation: frac, density: g/cm3, tex: g/km, filaments: string}
+Fiber  = {id, name, E: MPa, strength: MPa, elongation: frac, density: g/cm3, tex: g/km, filaments: string,
+          E2, G12: MPa (transverse/shear, for micromechanics), nu12}
 Resin  = {id, name, E: MPa, nu, density: g/cm3}
-LinerMaterial = {id, name, E, nu, yield, ultimate, density, hardening: MPa, elongation}
+LinerMaterial = {id, name, E, nu, yield, ultimate, density, hardening: MPa, elongation,
+                 fatigue_coeff: MPa, fatigue_exp (Basquin sigma'_f, b; indicative)}
 ```
 
 ## Frames

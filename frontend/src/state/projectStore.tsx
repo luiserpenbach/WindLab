@@ -1,12 +1,4 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useReducer,
-  type ReactNode,
-} from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, type ReactNode } from 'react';
 import type { Project } from '../api/types';
 import { defaultProject, normalizeProject } from './defaults';
 
@@ -106,8 +98,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, loadInitial);
 
   const update = useCallback(
-    (fn: (p: Project) => Project, key?: string) =>
-      dispatch({ type: 'update', fn, key, time: Date.now() }),
+    (fn: (p: Project) => Project, key?: string) => dispatch({ type: 'update', fn, key, time: Date.now() }),
     [],
   );
   const load = useCallback((p: Project) => dispatch({ type: 'load', project: p }), []);
@@ -133,7 +124,11 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       const k = e.key.toLowerCase();
       if (k !== 'z' && k !== 'y') return;
       const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'text' && !t.dataset.numeric))) {
+      if (
+        t &&
+        (t.tagName === 'TEXTAREA' ||
+          (t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'text' && !t.dataset.numeric))
+      ) {
         return;
       }
       e.preventDefault();

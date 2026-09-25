@@ -1,11 +1,4 @@
-import {
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type ReactNode,
-} from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { sig } from '../util/format';
 
 // ------------------------------------------------------------------ layout
@@ -192,7 +185,7 @@ export function NumberInput(props: NumberInputProps) {
   };
 
   return (
-    <div className={`num ${err ? 'invalid' : ''} ${disabled ? 'disabled' : ''} ${className ?? ''}`}>
+    <div className={`numin ${err ? 'invalid' : ''} ${disabled ? 'disabled' : ''} ${className ?? ''}`}>
       <input
         ref={ref}
         id={id}
@@ -225,7 +218,7 @@ export function NumberInput(props: NumberInputProps) {
         }}
         onKeyDown={onKey}
       />
-      {unit ? <span className="num-unit">{unit}</span> : null}
+      {unit ? <span className="numin-unit">{unit}</span> : null}
     </div>
   );
 }
@@ -480,7 +473,7 @@ export function SliderField({
           max={lt == null ? max : undefined}
           step={step}
           precision={4}
-          className="num-sm"
+          className="numin-sm"
         />
       </div>
       {display ? <span className="sr-only">{display(value)}</span> : null}

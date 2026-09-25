@@ -20,7 +20,7 @@ const PATHS = {
   stop: 'M6 6h12v12H6z',
   rewind: 'M11 6l-8 6 8 6zM21 6l-8 6 8 6z',
   fit: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
-  section: 'M12 3v18M5 7a7 5 0 0 1 7-4M5 17a7 5 0 0 0 7 4',
+  section: 'M4 13a8 8 0 0 0 16 0zM8 13a4 4 0 0 0 8 0M2 13h20M12 3v4',
   layers: 'M12 3l9 5-9 5-9-5zM3 13l9 5 9-5',
   grid: 'M3 9h18M3 15h18M9 3v18M15 3v18',
   print: 'M7 9V3h10v6M7 17H4v-7h16v7h-3M7 14h10v7H7z',
@@ -38,11 +38,7 @@ const PATHS = {
 
 export type IconName = keyof typeof PATHS;
 
-export function Icon({
-  name,
-  size = 16,
-  ...rest
-}: { name: IconName; size?: number } & SVGProps<SVGSVGElement>) {
+export function Icon({ name, size = 16, ...rest }: { name: IconName; size?: number } & SVGProps<SVGSVGElement>) {
   return (
     <svg
       width={size}

@@ -15,8 +15,7 @@ export function VesselPanel() {
   const l = project.liner;
   const r = project.requirements;
   const setL = (patch: Partial<LinerSpec>, key: string) => update(patchSection('liner', patch), `liner.${key}`);
-  const setR = (patch: Partial<Requirements>, key: string) =>
-    update(patchSection('requirements', patch), `req.${key}`);
+  const setR = (patch: Partial<Requirements>, key: string) => update(patchSection('requirements', patch), `req.${key}`);
   const linerMat = materials?.liners.find((m) => m.id === l.material);
   const st = result?.structural;
   const bar = (mpa: number) => `${sig(mpa * 10, 4)} bar`;
@@ -35,9 +34,30 @@ export function VesselPanel() {
               : undefined
           }
         />
-        <NumberField label="Outer radius" unit="mm" value={l.radius} gt={0} step={1} onCommit={(v) => setL({ radius: v }, 'radius')} />
-        <NumberField label="Cylinder length" unit="mm" value={l.cyl_length} min={0} step={5} onCommit={(v) => setL({ cyl_length: v }, 'cyl')} />
-        <NumberField label="Wall thickness" unit="mm" value={l.wall_thickness} gt={0} step={0.1} onCommit={(v) => setL({ wall_thickness: v }, 'wall')} />
+        <NumberField
+          label="Outer radius"
+          unit="mm"
+          value={l.radius}
+          gt={0}
+          step={1}
+          onCommit={(v) => setL({ radius: v }, 'radius')}
+        />
+        <NumberField
+          label="Cylinder length"
+          unit="mm"
+          value={l.cyl_length}
+          min={0}
+          step={5}
+          onCommit={(v) => setL({ cyl_length: v }, 'cyl')}
+        />
+        <NumberField
+          label="Wall thickness"
+          unit="mm"
+          value={l.wall_thickness}
+          gt={0}
+          step={0.1}
+          onCommit={(v) => setL({ wall_thickness: v }, 'wall')}
+        />
         <Field label="Dome type">
           <Segmented<DomeType>
             ariaLabel="Dome type"
@@ -62,14 +82,54 @@ export function VesselPanel() {
             onCommit={(v) => setL({ dome_aspect: v }, 'aspect')}
           />
         ) : null}
-        <NumberField label="Boss radius A" unit="mm" value={l.boss_radius_a} gt={0} step={1} hint="Polar boss, end A (z < 0)" onCommit={(v) => setL({ boss_radius_a: v }, 'bossA')} />
-        <NumberField label="Boss radius B" unit="mm" value={l.boss_radius_b} gt={0} step={1} hint="Polar boss, end B (z > 0)" onCommit={(v) => setL({ boss_radius_b: v }, 'bossB')} />
-        <NumberField label="Boss length" unit="mm" value={l.boss_length} min={0} step={1} hint="Protrusion beyond the dome" onCommit={(v) => setL({ boss_length: v }, 'bossL')} />
-        <NumberField label="Shaft radius" unit="mm" value={l.shaft_radius} gt={0} step={1} hint="Winding shaft beyond the bosses" onCommit={(v) => setL({ shaft_radius: v }, 'shaft')} />
+        <NumberField
+          label="Boss radius A"
+          unit="mm"
+          value={l.boss_radius_a}
+          gt={0}
+          step={1}
+          hint="Polar boss, end A (z < 0)"
+          onCommit={(v) => setL({ boss_radius_a: v }, 'bossA')}
+        />
+        <NumberField
+          label="Boss radius B"
+          unit="mm"
+          value={l.boss_radius_b}
+          gt={0}
+          step={1}
+          hint="Polar boss, end B (z > 0)"
+          onCommit={(v) => setL({ boss_radius_b: v }, 'bossB')}
+        />
+        <NumberField
+          label="Boss length"
+          unit="mm"
+          value={l.boss_length}
+          min={0}
+          step={1}
+          hint="Protrusion beyond the dome"
+          onCommit={(v) => setL({ boss_length: v }, 'bossL')}
+        />
+        <NumberField
+          label="Shaft radius"
+          unit="mm"
+          value={l.shaft_radius}
+          gt={0}
+          step={1}
+          hint="Winding shaft beyond the bosses"
+          onCommit={(v) => setL({ shaft_radius: v }, 'shaft')}
+        />
       </Section>
 
       <Section title="Requirements">
-        <NumberField label="MEOP" unit="MPa" value={r.meop} gt={0} step={1} hint={`= ${bar(r.meop)} · max. expected operating pressure`} onCommit={(v) => setR({ meop: v }, 'meop')} />
+        <NumberField
+          label="MEOP"
+          unit="MPa"
+          value={r.meop}
+          gt={0}
+          step={1}
+          hint={`= ${bar(r.meop)} · max. expected operating pressure`}
+          onCommit={(v) => setR({ meop: v }, 'meop')}
+        />
         <NumberField
           label="Burst factor"
           unit="×"
@@ -132,7 +192,15 @@ export function VesselPanel() {
           hint="Max fibre stress at MEOP / fibre strength (stress rupture)"
           onCommit={(v) => setR({ stress_ratio_limit: v }, 'srl')}
         />
-        <NumberField label="Design cycles" unit="cycles" value={r.design_cycles} min={1} integer step={100} onCommit={(v) => setR({ design_cycles: v }, 'cyc')} />
+        <NumberField
+          label="Design cycles"
+          unit="cycles"
+          value={r.design_cycles}
+          min={1}
+          integer
+          step={100}
+          onCommit={(v) => setR({ design_cycles: v }, 'cyc')}
+        />
         <NumberField
           label="Fatigue scatter factor"
           unit="×"
@@ -169,8 +237,23 @@ export function MeridianChart({ height = 240 }: { height?: number }) {
   const colors = layerColors(project.layers);
   const series: Series[] = [];
   if (result) {
-    series.push({ id: 'lo', name: 'Liner outer', x: result.liner_outer.x, y: result.liner_outer.y, color: 'var(--liner)', width: 2 });
-    series.push({ id: 'li', name: 'Liner inner', x: result.liner_inner.x, y: result.liner_inner.y, color: 'var(--liner)', dash: '4 3', width: 1.5 });
+    series.push({
+      id: 'lo',
+      name: 'Liner outer',
+      x: result.liner_outer.x,
+      y: result.liner_outer.y,
+      color: 'var(--liner)',
+      width: 2,
+    });
+    series.push({
+      id: 'li',
+      name: 'Liner inner',
+      x: result.liner_inner.x,
+      y: result.liner_inner.y,
+      color: 'var(--liner)',
+      dash: '4 3',
+      width: 1.5,
+    });
     result.layers.forEach((lr) =>
       series.push({
         id: `s-${lr.id}`,

@@ -85,7 +85,10 @@ export function ExportPanel() {
   return (
     <>
       <Section title="G-code">
-        <Field label="Controller" hint={`Output for ${project.machine.controller === 'grbl' ? 'GRBL (.gcode)' : 'LinuxCNC (.ngc)'} — change in step 5`}>
+        <Field
+          label="Controller"
+          hint={`Output for ${project.machine.controller === 'grbl' ? 'GRBL (.gcode)' : 'LinuxCNC (.ngc)'} — change in step 5`}
+        >
           <span className="value-text">{project.machine.name}</span>
         </Field>
         <Field label="Layers">
@@ -119,7 +122,8 @@ export function ExportPanel() {
                     })
                   }
                 />
-                <span className="muted">{i + 1}.</span> {l.id} <span className={`type-badge t-${l.type}`}>{l.type}</span>
+                <span className="muted">{i + 1}.</span> {l.id}{' '}
+                <span className={`type-badge t-${l.type}`}>{l.type}</span>
               </label>
             ))}
           </fieldset>
@@ -138,14 +142,19 @@ export function ExportPanel() {
         {s.gcodeError ? <Banner kind="fail">{s.gcodeError}</Banner> : null}
         {s.gcode ? (
           <>
-            {s.gcodeFor !== project ? <Banner kind="info">Project changed since generation — regenerate before running.</Banner> : null}
+            {s.gcodeFor !== project ? (
+              <Banner kind="info">Project changed since generation — regenerate before running.</Banner>
+            ) : null}
             <div className="kpi-grid">
               <Kpi label="Lines" value={s.gcode.lines.toLocaleString()} />
               <Kpi label="Est. time" value={fmtDuration(s.gcode.total_time)} />
             </div>
             <WarningList items={s.gcode.warnings} />
             <div className="toolbar">
-              <Button icon="download" onClick={() => s.gcode && downloadText(gcodeFilename(project, s.gcode), s.gcode.gcode)}>
+              <Button
+                icon="download"
+                onClick={() => s.gcode && downloadText(gcodeFilename(project, s.gcode), s.gcode.gcode)}
+              >
                 Download {ext(project)}
               </Button>
               <Button
@@ -161,7 +170,9 @@ export function ExportPanel() {
       </Section>
 
       <Section title="Traveller">
-        <p className="muted small">Shop-floor work instructions: materials, layer sequence, settings and sign-off fields.</p>
+        <p className="muted small">
+          Shop-floor work instructions: materials, layer sequence, settings and sign-off fields.
+        </p>
         <div className="toolbar">
           <Button icon="file" disabled={s.travellerBusy} onClick={genTraveller}>
             Generate traveller
@@ -169,7 +180,9 @@ export function ExportPanel() {
           {s.travellerBusy ? <Spinner size={12} /> : null}
         </div>
         {s.travellerError ? <Banner kind="fail">{s.travellerError}</Banner> : null}
-        {s.traveller && s.travellerFor !== project ? <Banner kind="info">Project changed since generation.</Banner> : null}
+        {s.traveller && s.travellerFor !== project ? (
+          <Banner kind="info">Project changed since generation.</Banner>
+        ) : null}
       </Section>
     </>
   );
@@ -183,7 +196,18 @@ function highlight(line: string) {
   const comment = m?.[2] ?? '';
   const parts = code.split(/(\s+)/).map((tok, i) => {
     const c = tok[0]?.toUpperCase();
-    const cls = c === 'G' ? 'g' : c === 'M' ? 'm' : c === 'N' ? 'n' : c === 'F' || c === 'S' ? 'f' : /[A-Z]/.test(c ?? '') ? 'a' : '';
+    const cls =
+      c === 'G'
+        ? 'g'
+        : c === 'M'
+          ? 'm'
+          : c === 'N'
+            ? 'n'
+            : c === 'F' || c === 'S'
+              ? 'f'
+              : /[A-Z]/.test(c ?? '')
+                ? 'a'
+                : '';
     return cls ? (
       <span key={i} className={`gc-${cls}`}>
         {tok}
@@ -200,8 +224,36 @@ function highlight(line: string) {
   );
 }
 
+/** First n lines without splitting a potentially multi-MB program. */
+function headLines(text: string, n: number): string[] {
+  const out: string[] = [];
+  let pos = 0;
+  while (out.length < n && pos <= text.length) {
+    const nl = text.indexOf('\n', pos);
+    const end = nl < 0 ? text.length : nl;
+    out.push(text.slice(pos, end).replace(/\r$/, ''));
+    if (nl < 0) break;
+    pos = nl + 1;
+  }
+  return out;
+}
+
+/** The backend returns an HTML fragment; wrap it in a print-friendly document. */
+function travellerDoc(html: string, title: string): string {
+  if (/<html[\s>]/i.test(html)) return html;
+  const esc = title.replace(/[<>&]/g, '');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc} – traveller</title><style>
+body{font:13px/1.45 system-ui,-apple-system,'Segoe UI',sans-serif;color:#111;margin:24px;max-width:1000px}
+h1{font-size:20px;margin:0 0 6px}h2{font-size:15px;margin:18px 0 6px;border-bottom:1px solid #ccc;padding-bottom:3px}
+table{border-collapse:collapse;width:100%;margin:6px 0;font-variant-numeric:tabular-nums}
+th,td{border:1px solid #bbb;padding:3px 6px;text-align:left;vertical-align:top}th{background:#f0f0f0}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace}
+@media print{body{margin:10mm}h2{break-after:avoid}tr{break-inside:avoid}}
+</style></head><body>${html}</body></html>`;
+}
+
 function GcodeViewer({ r }: { r: GcodeResponse }) {
-  const lines = useMemo(() => r.gcode.split(/\r?\n/).slice(0, PREVIEW_LINES), [r]);
+  const lines = useMemo(() => headLines(r.gcode, PREVIEW_LINES), [r]);
   return (
     <div className="gcode" role="region" aria-label="G-code preview" tabIndex={0}>
       <ol>
@@ -212,7 +264,9 @@ function GcodeViewer({ r }: { r: GcodeResponse }) {
         ))}
       </ol>
       {r.lines > PREVIEW_LINES ? (
-        <div className="gcode-more">… {(r.lines - PREVIEW_LINES).toLocaleString()} more lines — download for the full program</div>
+        <div className="gcode-more">
+          … {(r.lines - PREVIEW_LINES).toLocaleString()} more lines — download for the full program
+        </div>
       ) : null}
     </div>
   );
@@ -221,20 +275,36 @@ function GcodeViewer({ r }: { r: GcodeResponse }) {
 function TravellerViewer({ r }: { r: TravellerResponse }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const { project } = useProject();
+  const doc = useMemo(() => travellerDoc(r.html, project.name), [r, project.name]);
   return (
     <div className="traveller">
       <div className="toolbar">
         <Button icon="print" size="sm" onClick={() => frame.current?.contentWindow?.print()}>
           Print
         </Button>
-        <Button icon="download" size="sm" onClick={() => downloadText(`${safeFilename(project.name)}-traveller.html`, r.html, 'text/html')}>
+        <Button
+          icon="download"
+          size="sm"
+          onClick={() => downloadText(`${safeFilename(project.name)}-traveller.html`, doc, 'text/html')}
+        >
           HTML
         </Button>
-        <Button icon="download" size="sm" variant="ghost" onClick={() => downloadText(`${safeFilename(project.name)}-traveller.md`, r.markdown, 'text/markdown')}>
+        <Button
+          icon="download"
+          size="sm"
+          variant="ghost"
+          onClick={() => downloadText(`${safeFilename(project.name)}-traveller.md`, r.markdown, 'text/markdown')}
+        >
           Markdown
         </Button>
       </div>
-      <iframe ref={frame} title="Traveller" className="traveller-frame" sandbox="allow-same-origin allow-modals" srcDoc={r.html} />
+      <iframe
+        ref={frame}
+        title="Traveller"
+        className="traveller-frame"
+        sandbox="allow-same-origin allow-modals"
+        srcDoc={doc}
+      />
     </div>
   );
 }
@@ -244,10 +314,22 @@ export function ExportBottom() {
   return (
     <div className="export-bottom">
       <div className="tabs" role="tablist" aria-label="Export output">
-        <button type="button" role="tab" aria-selected={s.tab === 'gcode'} className={s.tab === 'gcode' ? 'on' : ''} onClick={() => store.set({ tab: 'gcode' })}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={s.tab === 'gcode'}
+          className={s.tab === 'gcode' ? 'on' : ''}
+          onClick={() => store.set({ tab: 'gcode' })}
+        >
           G-code preview
         </button>
-        <button type="button" role="tab" aria-selected={s.tab === 'traveller'} className={s.tab === 'traveller' ? 'on' : ''} onClick={() => store.set({ tab: 'traveller' })}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={s.tab === 'traveller'}
+          className={s.tab === 'traveller' ? 'on' : ''}
+          onClick={() => store.set({ tab: 'traveller' })}
+        >
           Traveller
         </button>
       </div>

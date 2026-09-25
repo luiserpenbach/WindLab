@@ -118,7 +118,11 @@ export function MaterialsPanel() {
               rows={[
                 ['E₁ (fibre dir.)', sig((vf * fiber.E + (1 - vf) * resin.E) / 1000, 4), 'GPa'],
                 ['Ply density', sig(vf * fiber.density + (1 - vf) * resin.density, 4), 'g/cm³'],
-                ['Fibre mass fraction', sig(((vf * fiber.density) / (vf * fiber.density + (1 - vf) * resin.density)) * 100, 3), '%'],
+                [
+                  'Fibre mass fraction',
+                  sig(((vf * fiber.density) / (vf * fiber.density + (1 - vf) * resin.density)) * 100, 3),
+                  '%',
+                ],
                 ['Design fibre strength', sig(fiber.strength * c.translation_efficiency, 4), 'MPa'],
               ]}
             />

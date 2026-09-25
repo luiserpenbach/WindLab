@@ -39,12 +39,26 @@ export function App() {
       <main className="center">
         <div className="banners">
           {catalog.error ? (
-            <Banner kind="warn" action={<Button size="sm" onClick={catalog.reload}>Retry</Button>}>
+            <Banner
+              kind="warn"
+              action={
+                <Button size="sm" onClick={catalog.reload}>
+                  Retry
+                </Button>
+              }
+            >
               Could not load reference data — {catalog.error}
             </Banner>
           ) : null}
           {error ? (
-            <Banner kind="fail" action={<Button size="sm" onClick={retry}>Retry</Button>}>
+            <Banner
+              kind="fail"
+              action={
+                <Button size="sm" onClick={retry}>
+                  Retry
+                </Button>
+              }
+            >
               <strong>Analysis failed:</strong> {error}
               {result && stale ? <span className="muted"> — showing the last valid result.</span> : null}
             </Banner>

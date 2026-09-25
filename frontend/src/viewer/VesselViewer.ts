@@ -17,7 +17,7 @@ import { layerColors } from './colors';
  * added in the z = 0 plane so the wall build-up is visible.
  */
 
-const SEG = 96;
+const SEG = 72;
 const PHI_SECTION_START = Math.PI / 2;
 const DEG = Math.PI / 180;
 
@@ -84,11 +84,46 @@ function interpCurve(c: Curve, z: number): number {
   return c.y[n - 1];
 }
 
-function curveToPoints(c: Curve): THREE.Vector2[] {
-  const out: THREE.Vector2[] = [];
+/**
+ * Profile (z, r) curve -> lathe points Vector2(r, z), simplified so that lathes
+ * stay light: points closer than `tol` mm to the chord of their neighbours
+ * are dropped (Douglas-Peucker-like greedy pass), capped at `maxPts`.
+ */
+function curveToPoints(c: Curve, tol = 0.05, maxPts = 220): THREE.Vector2[] {
+  const raw: THREE.Vector2[] = [];
   const n = Math.min(c.x.length, c.y.length);
   for (let i = 0; i < n; i++) {
-    if (Number.isFinite(c.x[i]) && Number.isFinite(c.y[i])) out.push(new THREE.Vector2(Math.max(0, c.y[i]), c.x[i]));
+    if (Number.isFinite(c.x[i]) && Number.isFinite(c.y[i])) raw.push(new THREE.Vector2(Math.max(0, c.y[i]), c.x[i]));
+  }
+  if (raw.length <= 3) return raw;
+  const keep = new Uint8Array(raw.length);
+  keep[0] = keep[raw.length - 1] = 1;
+  const stack: [number, number][] = [[0, raw.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop()!;
+    const pa = raw[a];
+    const pb = raw[b];
+    const dx = pb.x - pa.x;
+    const dy = pb.y - pa.y;
+    const len = Math.hypot(dx, dy) || 1;
+    let best = -1;
+    let bd = tol;
+    for (let i = a + 1; i < b; i++) {
+      const d = Math.abs((raw[i].x - pa.x) * dy - (raw[i].y - pa.y) * dx) / len;
+      if (d > bd) {
+        bd = d;
+        best = i;
+      }
+    }
+    if (best >= 0) {
+      keep[best] = 1;
+      stack.push([a, best], [best, b]);
+    }
+  }
+  let out = raw.filter((_, i) => keep[i]);
+  if (out.length > maxPts) {
+    const step = out.length / maxPts;
+    out = Array.from({ length: maxPts }, (_, k) => out[Math.floor(k * step)]).concat(out[out.length - 1]);
   }
   return out;
 }
@@ -142,6 +177,7 @@ export class VesselViewer {
   private showLayers = true;
   private showGrid = true;
   private selectedLayer: string | null = null;
+  private layerCutoff: string | null = null;
   private layerMeshes = new Map<string, THREE.Object3D[]>();
   private maxR = 100;
   private span: [number, number] = [-250, 250];
@@ -215,6 +251,13 @@ export class VesselViewer {
       this.fit();
       this.hasFitted = true;
     }
+  }
+
+  /** Show only layers wound before `id` (null = all layers). */
+  setLayerCutoff(id: string | null) {
+    if (id === this.layerCutoff) return;
+    this.layerCutoff = id;
+    this.rebuildVessel();
   }
 
   setSelectedLayer(id: string | null) {
@@ -487,9 +530,24 @@ export class VesselViewer {
     const bossA = Math.max(liner.boss_radius_a, rA * 0.6);
     const bossB = Math.max(liner.boss_radius_b, rB * 0.6);
     const cyl = (r: number, z0: number, z1: number, mat: THREE.Material) => {
-      const pts = [new THREE.Vector2(0, z0), new THREE.Vector2(r, z0), new THREE.Vector2(r, z1), new THREE.Vector2(0, z1)];
+      const pts = [
+        new THREE.Vector2(0, z0),
+        new THREE.Vector2(r, z0),
+        new THREE.Vector2(r, z1),
+        new THREE.Vector2(0, z1),
+      ];
       this.staticGroup.add(new THREE.Mesh(latheX(pts, this.section), mat));
-      if (this.section) this.addCap(this.staticGroup, [[z0, 0], [z0, r], [z1, r], [z1, 0]], mat);
+      if (this.section)
+        this.addCap(
+          this.staticGroup,
+          [
+            [z0, 0],
+            [z0, r],
+            [z1, r],
+            [z1, 0],
+          ],
+          mat,
+        );
     };
     cyl(bossA, zMin - bl, zMin + Math.min(8, (zMax - zMin) * 0.05), bossMat);
     cyl(bossB, zMax - Math.min(8, (zMax - zMin) * 0.05), zMax + bl, bossMat);
@@ -500,40 +558,49 @@ export class VesselViewer {
     this.span = [s0, s1];
 
     // ---- layers
+    // `layerCutoff`: show only the layers wound before this one (simulation).
     if (a && this.showLayers) {
       const colors = layerColors(d.layers.length ? d.layers : a.layers);
+      const cutIdx = this.layerCutoff ? a.layers.findIndex((l) => l.id === this.layerCutoff) : -1;
+      const shown = cutIdx >= 0 ? a.layers.slice(0, cutIdx) : a.layers;
       let prev: Curve = outer;
-      const n = a.layers.length;
-      a.layers.forEach((lr, idx) => {
+      const n = shown.length;
+      shown.forEach((lr, idx) => {
         const color = colors.get(lr.id) ?? '#2a78d6';
         const meshes: THREE.Object3D[] = [];
         if (lr.surface.x.length > 1) {
-          const isLast = idx === n - 1;
-          const mat = this.material(color, {
-            transparent: true,
-            opacity: this.section ? 0.95 : isLast ? 0.55 : 0.3,
-            depthWrite: this.section,
-            roughness: 0.7,
-            polygonOffset: true,
-            polygonOffsetFactor: -1 - idx,
-            polygonOffsetUnits: -1,
-          });
-          // only the extent of the layer, bottom follows the previous surface
-          const top: [number, number][] = [];
-          const bot: [number, number][] = [];
-          for (let i = 0; i < lr.surface.x.length; i++) {
-            const z = lr.surface.x[i];
-            const rp = interpCurve(prev, z);
-            top.push([z, Math.max(lr.surface.y[i], rp)]);
-            bot.push([z, rp]);
+          const isOuter = idx === n - 1;
+          // Section: only the outermost surface is drawn (inner ones are hidden
+          // behind it anyway) and every layer shows as a filled cap.
+          // Full view: inner layers faint, outermost semi-transparent.
+          if (!this.section || isOuter) {
+            const mat = this.material(color, {
+              transparent: !this.section,
+              opacity: this.section ? 1 : isOuter ? 0.5 : 0.1,
+              depthWrite: this.section,
+              roughness: 0.7,
+            });
+            const m = new THREE.Mesh(latheX(curveToPoints(lr.surface), this.section), mat);
+            m.renderOrder = 1 + idx;
+            m.userData.baseOpacity = mat.opacity;
+            this.staticGroup.add(m);
+            meshes.push(m);
           }
-          const m = new THREE.Mesh(latheX(curveToPoints(lr.surface), this.section), mat);
-          m.renderOrder = 1 + idx;
-          m.userData.baseOpacity = mat.opacity;
-          this.staticGroup.add(m);
-          meshes.push(m);
           if (this.section) {
-            const capMat = this.material(color, { roughness: 0.8 });
+            const top: [number, number][] = [];
+            const bot: [number, number][] = [];
+            for (let i = 0; i < lr.surface.x.length; i++) {
+              const z = lr.surface.x[i];
+              const rp = interpCurve(prev, z);
+              top.push([z, Math.max(lr.surface.y[i], rp)]);
+              bot.push([z, rp]);
+            }
+            const capMat = this.material(color, {
+              roughness: 0.8,
+              polygonOffset: true,
+              polygonOffsetFactor: -1,
+              polygonOffsetUnits: -1,
+            });
             this.addCap(this.staticGroup, [...top, ...bot.reverse()], capMat, meshes);
           }
           prev = lr.surface;
@@ -559,7 +626,10 @@ export class VesselViewer {
     }
     const mat = new THREE.MeshStandardMaterial({ color: '#e8c547', roughness: 0.5 });
     const chuckR = Math.max(shaftR * 2.6, 30);
-    const chuck = new THREE.Mesh(new THREE.CylinderGeometry(chuckR, chuckR, 18, 40), this.material('#454a52', { metalness: 0.6 }));
+    const chuck = new THREE.Mesh(
+      new THREE.CylinderGeometry(chuckR, chuckR, 18, 40),
+      this.material('#454a52', { metalness: 0.6 }),
+    );
     chuck.rotation.z = -Math.PI / 2;
     const zc = z0 - Math.max(60, this.maxR * 0.8) + 9;
     chuck.position.x = zc;
@@ -617,7 +687,7 @@ export class VesselViewer {
         if (!mat.transparent) continue;
         const base = (m.userData.baseOpacity as number | undefined) ?? mat.opacity;
         if (!sel) mat.opacity = base;
-        else mat.opacity = id === sel ? Math.max(0.75, base) : Math.min(base, this.section ? 0.35 : 0.12);
+        else mat.opacity = id === sel ? Math.max(0.6, base) : Math.min(base, 0.06);
         mat.emissive = new THREE.Color(id === sel ? '#222222' : '#000000');
       }
     }
@@ -674,7 +744,10 @@ export class VesselViewer {
     const eye = new THREE.Group();
     const body = new THREE.Mesh(new THREE.BoxGeometry(34, 14, 20), this.material('#eda100'));
     eye.add(body);
-    const roller = new THREE.Mesh(new THREE.CylinderGeometry(4, 4, 30, 20), this.material('#2b2f36', { metalness: 0.6 }));
+    const roller = new THREE.Mesh(
+      new THREE.CylinderGeometry(4, 4, 30, 20),
+      this.material('#2b2f36', { metalness: 0.6 }),
+    );
     roller.rotation.z = Math.PI / 2;
     roller.position.y = -10;
     eye.add(roller);
