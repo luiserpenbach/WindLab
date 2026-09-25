@@ -463,7 +463,8 @@ function CureCycleEditor({
     setSugg({ busy: true, notes: [], error: null });
     try {
       const r = await api.suggestCure(project);
-      set({ cure_cycle: r.cure_cycle }, 'cycle');
+      // the residual-stress model takes the final hold as the stress-free temperature
+      set({ cure_cycle: r.cure_cycle, cure_temperature: r.cure_temperature }, 'cycle');
       setSugg({ busy: false, notes: r.notes, error: null });
     } catch (e) {
       setSugg({ busy: false, notes: [], error: errorMessage(e) });

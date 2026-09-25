@@ -179,6 +179,21 @@ textarea {
   gap: 8px;
   min-width: 0;
 }
+/* Layup pattern style: preset on its own row, pattern number + direction below */
+.inline.pattern-style {
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+.inline.pattern-style > .select:first-child {
+  flex: 1 1 100%;
+}
+.inline.pattern-style > :not(:first-child) {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.inline.pattern-style > :nth-child(2) {
+  flex: 0 0 76px;
+}
 .center {
   text-align: center;
 }
@@ -1827,9 +1842,12 @@ td.bad {
   font-size: 10px;
 }
 .chart-ref line {
-  stroke: var(--axis);
   stroke-dasharray: 4 3;
   stroke-width: 1.2;
+}
+/* a reference line keeps its own colour; uncoloured ones use the axis colour */
+.chart-ref line:not([stroke]) {
+  stroke: var(--axis);
 }
 .chart-ref text {
   fill: var(--text-2);

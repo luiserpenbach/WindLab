@@ -394,6 +394,7 @@ class CureResult(BaseModel):
 
 class CureSuggestion(BaseModel):
     cure_cycle: list[CureStep]
+    cure_temperature: float  # stress-free temperature to use with it: the highest set point [degC]
     result: CureResult
     notes: list[str] = []
 

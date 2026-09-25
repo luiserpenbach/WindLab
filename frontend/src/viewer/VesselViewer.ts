@@ -1062,7 +1062,7 @@ export class VesselViewer {
 
   private buildMandrelMarks(z0: number, z1: number, shaftR: number) {
     for (const c of [...this.mandrelGroup.children]) {
-      if (c === this.pathGroup || c === this.simVis?.laid) continue;
+      if (c === this.pathGroup || c === this.transitionGroup || c === this.simVis?.laid) continue;
       this.mandrelGroup.remove(c);
       disposeTree(c);
     }

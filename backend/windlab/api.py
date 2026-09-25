@@ -230,7 +230,8 @@ def post_suggest_cure(project: S.Project):
 
     def run():
         steps, res, notes = suggest_cycle(build(project))
-        return S.CureSuggestion(cure_cycle=steps, result=res, notes=notes)
+        return S.CureSuggestion(cure_cycle=steps, cure_temperature=max(c.temperature for c in steps), result=res,
+                                notes=notes)
 
     return _design_errors(run)
 

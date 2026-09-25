@@ -359,7 +359,7 @@ export function MachinePanel() {
           <Switch
             checked={m.pause_between_layers}
             onChange={(v) => set({ pause_between_layers: v }, 'pbl')}
-            label={m.pause_between_layers ? 'M0 pause' : 'Continuous'}
+            label={m.pause_between_layers ? 'M0 pause' : 'No pause'}
           />
         </Field>
       </Section>

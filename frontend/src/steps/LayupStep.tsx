@@ -756,7 +756,7 @@ function PatternStyleField({
         </>
       }
     >
-      <div className="inline">
+      <div className="inline pattern-style">
         <Select<PatternPreset>
           ariaLabel="Pattern style preset"
           value={preset}

@@ -11,6 +11,7 @@ import type {
   ProgressiveResult,
   Project,
   RuptureResult,
+  SensitivityResult,
   Status,
   StructuralResult,
 } from '../api/types';
@@ -202,6 +203,7 @@ export function AnalysisPanel() {
       {result.cure?.sections.length ? <CurePanel cure={result.cure} checks={result.checks} /> : null}
       {st ? <LoadTable st={st} temps={req} polymer={polymer} /> : null}
       {st ? <PressureTargets /> : null}
+      {st ? <ScatterSection /> : null}
       <ProgressiveSection />
       <ChecksList checks={result.checks} title="All checks" />
     </>
@@ -289,6 +291,99 @@ function RuptureSection({ r, polymer }: { r: RuptureResult; polymer: boolean }) 
         plotted below the 3D view.
         {polymer ? ` ${NO_AUTOFRETTAGE_NOTE}` : null}
       </p>
+    </Section>
+  );
+}
+
+// ------------------------------------------------------------------ burst scatter
+/** Burst scatter from material / process scatter (FOSM, run on demand: ~5-15 s). */
+function ScatterSection() {
+  const { project } = useProject();
+  const [state, setState] = useState<{
+    busy: boolean;
+    result: SensitivityResult | null;
+    forProject: unknown;
+    error: string | null;
+  }>({ busy: false, result: null, forProject: null, error: null });
+  const run = async () => {
+    setState((s) => ({ ...s, busy: true, error: null }));
+    try {
+      const r = await api.sensitivity(project);
+      setState({ busy: false, result: r, forProject: project, error: null });
+    } catch (e) {
+      setState((s) => ({ ...s, busy: false, error: errorMessage(e) }));
+    }
+  };
+  const r = state.result;
+  const stale = r != null && state.forProject !== project;
+  const pass = r != null && r.lower_90 >= r.required;
+  return (
+    <Section title="Burst scatter">
+      <div className="toolbar">
+        <Button
+          size="sm"
+          icon="gauge"
+          disabled={state.busy}
+          onClick={run}
+          title="Perturb fibre strength / modulus / tex, Vf, translation efficiency, liner yield / wall and the stress-free temperature by one standard deviation each"
+        >
+          {state.busy ? 'Computing…' : r ? 'Recompute' : 'Compute burst scatter'}
+        </Button>
+        {state.busy ? <Spinner size={12} label="Computing burst scatter" /> : null}
+      </div>
+      {state.error ? <Banner>{state.error}</Banner> : null}
+      {stale ? <p className="muted small">The project changed since this was computed.</p> : null}
+      {r ? (
+        <>
+          <div className="kpi-grid">
+            <Kpi
+              label="Burst 90 % lower bound"
+              value={sig(r.lower_90, 4)}
+              unit="MPa"
+              status={pass ? 'ok' : 'warn'}
+              sub={`nominal ${sig(r.nominal, 4)} · required ${sig(r.required, 4)}`}
+            />
+            <Kpi label="Burst scatter" value={sig(r.sd, 3)} unit="MPa" sub={`CoV ${sig(100 * r.cov, 3)} %`} />
+            <Kpi
+              label="P(burst < required)"
+              value={r.p_below_required < 1e-12 ? '< 1e-12' : fmtPf(r.p_below_required)}
+              title="Normal approximation"
+            />
+          </div>
+          <div className="table-scroll">
+            <table className="data-table compact">
+              <caption>Contribution to the burst scatter</caption>
+              <thead>
+                <tr>
+                  <th>Input</th>
+                  <th>Scatter</th>
+                  <th className="num" title="Burst change per +1 standard deviation">
+                    Δ burst
+                  </th>
+                  <th className="num" title="Share of the burst variance">
+                    share
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {r.items.map((i) => (
+                  <tr key={i.name} title={i.note || undefined}>
+                    <td>{i.name}</td>
+                    <td>{i.scatter}</td>
+                    <td className="num">{i.note ? '–' : `${i.effect >= 0 ? '+' : ''}${sig(i.effect, 3)}`}</td>
+                    <td className="num">{i.note ? '–' : `${sig(100 * i.share, 3)} %`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="muted small">{r.notes.join('. ')}.</p>
+        </>
+      ) : (
+        <p className="muted small">
+          How much the burst pressure scatters with material and process scatter, and which input to tighten first.
+        </p>
+      )}
     </Section>
   );
 }
@@ -1041,6 +1136,12 @@ function cancelProgressive() {
   progCtrl?.abort();
   progCtrl = null;
   progStore.set({ started: null });
+}
+
+/** Drop the progressive result (and any running request): a loaded / new project is a different vessel. */
+export function resetProgressive() {
+  cancelProgressive();
+  progStore.set({ result: null, resultFor: null, error: null });
 }
 
 const EVENT_KIND: Record<FailureEventKind, string> = {

@@ -6,18 +6,24 @@ import { useAnalysis, useCatalog } from './state/analysis';
 import { useProject } from './state/projectStore';
 import { STEPS, useUi } from './state/uiStore';
 import { STEP_VIEWS } from './steps';
+import { resetProgressive } from './steps/AnalysisStep';
 import { Viewport } from './viewer/Viewport';
 
 export function App() {
-  const { step, setStep, setThk } = useUi();
+  const { step, setStep, setThk, setContinuousPlan } = useUi();
   const { revision } = useProject();
   const { error, stale, loading, retry, result } = useAnalysis();
   const catalog = useCatalog();
   const view = STEP_VIEWS[step];
   const meta = STEPS.find((s) => s.id === step)!;
 
-  // A loaded / new project invalidates the thickness map (it is not recomputed on edits).
-  useEffect(() => setThk(null), [revision, setThk]);
+  // A loaded / new project invalidates the thickness map, the continuous-winding plan and the
+  // progressive-failure result (they are not recomputed on edits).
+  useEffect(() => {
+    setThk(null);
+    setContinuousPlan(null);
+    resetProgressive();
+  }, [revision, setThk, setContinuousPlan]);
 
   // Alt+1..9 switches workflow steps.
   useEffect(() => {

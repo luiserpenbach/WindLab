@@ -70,10 +70,24 @@ export function niceTicks(lo: number, hi: number, count = 6): number[] {
   const raw = span / Math.max(1, count);
   const mag = Math.pow(10, Math.floor(Math.log10(raw)));
   const norm = raw / mag;
-  const step = (norm >= 5 ? 10 : norm >= 2 ? 5 : norm >= 1 ? 2 : 1) * mag;
-  const out: number[] = [];
-  const start = Math.ceil(lo / step - 1e-9) * step;
-  for (let v = start; v <= hi + step * 1e-9; v += step) out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+  let step = (norm >= 5 ? 10 : norm >= 2 ? 5 : norm >= 1 ? 2 : 1) * mag;
+  const ticks = (st: number) => {
+    const out: number[] = [];
+    const start = Math.ceil(lo / st - 1e-9) * st;
+    for (let v = start; v <= hi + st * 1e-9; v += st) out.push(Math.abs(v) < st * 1e-9 ? 0 : v);
+    return out;
+  };
+  let out = ticks(step);
+  // rounding the step up can leave a single tick on a narrow axis (e.g. only "0" on z ∈ [-95, 95]):
+  // step down the 1-2-5 ladder until there are at least three
+  while (out.length < 3 && count >= 2) {
+    const m = Math.pow(10, Math.floor(Math.log10(step) + 1e-9));
+    const n = Math.round(step / m);
+    step = (n === 1 ? 5 : n === 2 ? 10 : 20) * (m / 10);
+    const next = ticks(step);
+    if (next.length > count * 2) break;
+    out = next;
+  }
   return out;
 }
 
@@ -209,6 +223,19 @@ export function LineChart({
   const xt = niceTicks(xd[0], xd[1], Math.max(3, Math.floor(plotW / 80)));
   const yt = niceTicks(yd[0], yd[1], Math.max(3, Math.floor(plotH / 40)));
   const xStep = xt.length > 1 ? xt[1] - xt[0] : 1;
+  // reference-line labels closer than a text line to the previous right-aligned one go to the left
+  const hLeft = new Set<number>();
+  {
+    let last = -Infinity;
+    (hlines ?? [])
+      .map((h, i) => ({ i, y: sy(h.value), label: h.label }))
+      .filter((h) => h.label)
+      .sort((a, b) => a.y - b.y)
+      .forEach((h) => {
+        if (h.y - last < 12) hLeft.add(h.i);
+        else last = h.y;
+      });
+  }
   const yStep = yt.length > 1 ? yt[1] - yt[0] : 1;
 
   const paths = useMemo(
@@ -412,9 +439,9 @@ export function LineChart({
                   <line x1={PAD.l} x2={PAD.l + plotW} y1={sy(h.value)} y2={sy(h.value)} stroke={h.color} />
                   {h.label ? (
                     <text
-                      x={PAD.l + plotW - 4}
+                      x={hLeft.has(i) ? PAD.l + 4 : PAD.l + plotW - 4}
                       y={sy(h.value) < PAD.t + 14 ? sy(h.value) + 12 : sy(h.value) - 4}
-                      textAnchor="end"
+                      textAnchor={hLeft.has(i) ? 'start' : 'end'}
                     >
                       {h.label}
                     </text>

@@ -591,8 +591,33 @@ export interface CureSection {
   peak_liner: number;
 }
 
+export interface SensitivityItem {
+  name: string;
+  scatter: string;
+  burst_minus: number;
+  burst_plus: number;
+  /** Burst change per +1 standard deviation of the input [MPa]. */
+  effect: number;
+  /** Share of the burst variance. */
+  share: number;
+  note: string;
+}
+
+export interface SensitivityResult {
+  nominal: number;
+  sd: number;
+  cov: number;
+  lower_90: number;
+  required: number;
+  p_below_required: number;
+  items: SensitivityItem[];
+  notes: string[];
+}
+
 export interface CureSuggestion {
   cure_cycle: CureStep[];
+  /** Stress-free temperature to use with the cycle: its highest set point [degC]. */
+  cure_temperature: number;
   result: CureResult;
   notes: string[];
 }
