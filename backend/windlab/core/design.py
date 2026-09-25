@@ -143,7 +143,11 @@ def build(project: S.Project) -> Build:
             except GeometryError as e:
                 raise DesignError(f"Layer {i + 1}: {e}") from e
             angle = gp.alpha_mid
-            cands = pat.candidates(gp.advance, R_mid, angle, L.band_width, math.radians(L.dwell_max))
+            cands = pat.candidates(gp.advance, R_mid, angle, L.band_width, math.radians(L.dwell_max),
+                                   target_p=L.pattern_number, direction=L.pattern_direction)
+            if L.pattern is None and L.pattern_number and cands and cands[0].pattern_number != L.pattern_number:
+                warnings.append(f"Pattern number {L.pattern_number} not reachable within the dwell/overlap limits; "
+                                f"closest is {cands[0].pattern_number}")
             if L.pattern is not None:
                 try:
                     chosen = pat.evaluate(gp.advance, R_mid, angle, L.band_width, L.pattern.n_bands, L.pattern.shift)

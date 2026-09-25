@@ -148,6 +148,11 @@ class Layer(BaseModel):
         None, ge=0, description="Extra turnaround radius at end B [mm]; null = same as end A"
     )
     pattern: Optional[PatternChoice] = Field(None, description="null = auto-select best pattern")
+    pattern_number: Optional[int] = Field(
+        None, ge=1, le=60, description="Pattern style: diamonds around the circumference (1-2 large diamonds, "
+                                       ">= 8 fine); null = no preference (auto)")
+    pattern_direction: Literal["any", "leading", "lagging"] = Field(
+        "any", description="Pattern style: advance direction of successive circuits")
     dwell_max: float = Field(90.0, ge=0, le=360, description="Max dwell per turnaround [deg]")
     # hoop
     passes: int = Field(2, ge=1, description="Hoop traverses (each deposits one band thickness)")

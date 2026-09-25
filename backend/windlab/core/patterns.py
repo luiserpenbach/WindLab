@@ -61,34 +61,44 @@ def candidates(
     dwell_max: float,
     max_overlap: float = 0.15,
     limit: int = 12,
+    target_p: int | None = None,
+    direction: str = "any",
 ) -> list[Pattern]:
     """Enumerate closing patterns, best first.
 
     natural_advance: azimuth advance of one geodesic pass [rad]
     radius, angle:   cylinder radius [mm] and winding angle [rad]
     dwell_max:       max dwell per turnaround [rad]
+    target_p:        desired pattern number = diamonds around the circumference (1-2: large diamonds,
+                     high: fine pattern); None = no preference
+    direction:       "leading", "lagging" or "any"
     """
-    n_min = int(np.ceil(TWO_PI * radius * np.cos(angle) / band_width))
-    n_min = max(n_min, 1)
-    n_max = max(int(np.floor(n_min * (1.0 + max_overlap))), n_min)
-    out: list[Pattern] = []
-    for n in range(n_min, n_max + 1):
-        coverage = n * band_width / (TWO_PI * radius * np.cos(angle))
-        for k in range(1, n):
-            if gcd(k, n) != 1:
-                continue
-            d = dwell_for(natural_advance, n, k)
-            # allow one full extra turn of dwell split over two turnarounds
-            if d > dwell_max:
-                continue
-            p, leading = pattern_number(n, k)
-            # prefer: small dwell, little overlap, moderate pattern numbers
-            score = (
-                d / max(dwell_max, 1e-9)
-                + 4.0 * (coverage - 1.0)
-                + 0.03 * abs(p - 5)
-            )
-            out.append(Pattern(n, k, p, d, coverage, leading, score))
+    def search(overlap: float) -> list[Pattern]:
+        n_min = max(int(np.ceil(TWO_PI * radius * np.cos(angle) / band_width)), 1)
+        n_max = max(int(np.floor(n_min * (1.0 + overlap))), n_min)
+        out: list[Pattern] = []
+        for n in range(n_min, n_max + 1):
+            coverage = n * band_width / (TWO_PI * radius * np.cos(angle))
+            for k in range(1, n):
+                if gcd(k, n) != 1:
+                    continue
+                d = dwell_for(natural_advance, n, k)
+                if d > dwell_max:
+                    continue
+                p, leading = pattern_number(n, k)
+                if direction == "leading" and not leading or direction == "lagging" and leading:
+                    continue
+                score = d / max(dwell_max, 1e-9) + 4.0 * (coverage - 1.0)
+                if target_p:
+                    score += 3.0 * abs(p - target_p) / max(target_p, 1)
+                else:
+                    score += 0.03 * abs(p - 5)  # moderate pattern numbers
+                out.append(Pattern(n, k, p, d, coverage, leading, score))
+        return out
+
+    out = search(max_overlap)
+    if target_p and not any(c.pattern_number == target_p for c in out):
+        out = search(max(max_overlap, 0.35))  # allow more overlap to reach the requested style
     out.sort(key=lambda c: c.score)
     return out[:limit]
 

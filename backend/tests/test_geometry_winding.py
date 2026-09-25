@@ -78,3 +78,14 @@ def test_helical_thickness_on_cylinder_and_growth_on_dome():
     assert t_mid == pytest.approx(bl.t_cyl, rel=1e-3)
     assert bl.thickness.max() > 3 * bl.t_cyl  # build-up near the polar opening
     assert np.all(np.isfinite(bl.thickness))
+
+
+@pytest.mark.parametrize("target,direction", [(2, "leading"), (5, "lagging"), (3, "any")])
+def test_pattern_style_selection(target, direction):
+    from windlab.core.design import build
+
+    L = S.Layer(id="h", type="helical", pattern_number=target, pattern_direction=direction, dwell_max=180)
+    p = build(S.Project(layers=[L])).layers[0].pattern
+    assert p.pattern_number == target
+    if direction != "any":
+        assert p.leading == (direction == "leading")
