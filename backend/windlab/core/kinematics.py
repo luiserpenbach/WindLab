@@ -150,6 +150,9 @@ def simulate_layer(b: Build, bl: BuiltLayer) -> Motion:
     T = np.gradient(P, axis=0)
     T /= np.maximum(np.linalg.norm(T, axis=1), 1e-12)[:, None]
     xs, env = eye_envelope(b, bl)
+    if m.axes_count == 2:
+        # no crossfeed: the eye runs at one fixed radius clearing everything it passes
+        env = np.full_like(env, float(env[(xs > P[:, 0].min() - 50) & (xs < P[:, 0].max() + 50)].max()))
 
     # vectorised bisection for the free fibre length lam
     lo = np.zeros(len(P))
@@ -183,7 +186,7 @@ def simulate_layer(b: Build, bl: BuiltLayer) -> Motion:
     beta = np.arctan2(Wz, W[:, 0])
     beta = np.unwrap(2 * beta) / 2  # band is symmetric: period pi
     beta -= math.pi * round(float(beta[0]) / math.pi)
-    if m.axes_count == 3:
+    if m.axes_count < 4:
         beta = np.zeros_like(beta)
 
     axes = [m.carriage, m.crossfeed, m.mandrel] + ([m.eye] if m.axes_count == 4 and m.eye else [])
@@ -240,6 +243,8 @@ def machine_coords(m: S.MachineSpec, x, y, a, b) -> dict[str, np.ndarray]:
 def check_limits(m: S.MachineSpec, x, y, a, b) -> list[str]:
     w = []
     mc = machine_coords(m, x, y, a, b)
+    if m.axes_count < 3:
+        mc.pop("crossfeed", None)
     for key, ax in (("carriage", m.carriage), ("crossfeed", m.crossfeed), ("eye", m.eye)):
         if key not in mc or ax is None:
             continue

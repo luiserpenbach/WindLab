@@ -44,10 +44,13 @@ def machine_presets() -> list[dict]:
         tension_scale=10.0,
         rotary_reset="circuit",
     )
+    grbl2 = grbl3.model_copy(update={"name": "GRBL 2-axis winder (carriage + mandrel)", "axes_count": 2})
     return [
         {"id": "linuxcnc-4axis", "label": "LinuxCNC 4-axis (X carriage, Y crossfeed, A mandrel, B eye)", "machine": lcnc4},
         {"id": "linuxcnc-3axis", "label": "LinuxCNC 3-axis (X carriage, Y crossfeed, A mandrel)", "machine": lcnc3},
         {"id": "grbl-3axis", "label": "GRBL 3-axis (X carriage, Y mandrel in deg, Z crossfeed)", "machine": grbl3},
+        {"id": "grbl-2axis", "label": "GRBL 2-axis (X carriage, Y mandrel in deg; eye at fixed radius)",
+         "machine": grbl2},
         {"id": "grblhal-4axis", "label": "grblHAL 4-axis (X carriage, Y crossfeed, A mandrel, B eye)", "machine": grbl4},
     ]
 

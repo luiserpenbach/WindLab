@@ -115,7 +115,9 @@ class MachineAxis(BaseModel):
 
 class MachineSpec(BaseModel):
     name: str = "Generic 4-axis LinuxCNC"
-    axes_count: Literal[3, 4] = 4
+    axes_count: Literal[2, 3, 4] = Field(
+        4, description="2: mandrel + carriage (eye at fixed radius), 3: + crossfeed, 4: + eye rotation"
+    )
     controller: Literal["linuxcnc", "grbl"] = "linuxcnc"
     carriage: MachineAxis = MachineAxis(letter="X", max_velocity=20000, max_accel=500, min=-50, max=1500)
     mandrel: MachineAxis = MachineAxis(letter="A", max_velocity=36000, max_accel=720)

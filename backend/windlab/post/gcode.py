@@ -55,8 +55,10 @@ class Post:
 
     def axis_words(self, pos: dict[str, float]) -> list[str]:
         m = self.m
-        out = [f"{m.carriage.letter}{self.fmt(pos['carriage'])}", f"{m.crossfeed.letter}{self.fmt(pos['crossfeed'])}",
-               f"{m.mandrel.letter}{self.fmt(pos['mandrel'])}"]
+        out = [f"{m.carriage.letter}{self.fmt(pos['carriage'])}"]
+        if m.axes_count >= 3:
+            out.append(f"{m.crossfeed.letter}{self.fmt(pos['crossfeed'])}")
+        out.append(f"{m.mandrel.letter}{self.fmt(pos['mandrel'])}")
         if "eye" in pos and m.eye:
             out.append(f"{m.eye.letter}{self.fmt(pos['eye'])}")
         return out
@@ -187,13 +189,15 @@ def generate(project: S.Project, layer_ids: list[str] | None = None) -> Program:
             L += post.pause(f"Layer {bl.index + 1} {sp.id}: {sp.tows} tow(s), band {sp.band_width} mm, "
                             f"tension {sp.tension} N")
         L.append("G94")
-        L.append(post.words("G0", f"{m.crossfeed.letter}{post.fmt(safe_cf)}"))
+        if m.axes_count >= 3:
+            L.append(post.words("G0", f"{m.crossfeed.letter}{post.fmt(safe_cf)}"))
         if m.rotary_reset != "none" and prev_end is not None:
             L += post.set_rotary(prev_end % period)
         first = {k: float(v[0]) for k, v in mc.items()}
-        start_words = [w for w in post.axis_words(first) if not w.startswith(m.crossfeed.letter)]
+        start_words = [w for w in post.axis_words(first) if m.axes_count < 3 or not w.startswith(m.crossfeed.letter)]
         L.append(post.words("G0", *start_words))
-        L.append(post.words("G0", f"{m.crossfeed.letter}{post.fmt(first['crossfeed'])}"))
+        if m.axes_count >= 3:
+            L.append(post.words("G0", f"{m.crossfeed.letter}{post.fmt(first['crossfeed'])}"))
         L += post.tension(sp.tension)
         L.append("G93")
         dt = np.diff(mo.t)

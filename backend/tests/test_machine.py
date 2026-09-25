@@ -43,14 +43,15 @@ def test_hoop_eye_roll_is_small_and_helical_turns(sized_project):
     assert np.abs(hel.b).max() > 45.0
 
 
-@pytest.mark.parametrize("preset", ["linuxcnc-4axis", "linuxcnc-3axis", "grbl-3axis", "grblhal-4axis"])
+@pytest.mark.parametrize("preset", ["linuxcnc-4axis", "linuxcnc-3axis", "grbl-3axis", "grbl-2axis", "grblhal-4axis"])
 def test_gcode_is_well_formed(sized_project, preset):
     m = next(p["machine"] for p in presets.machine_presets() if p["id"] == preset)
     prj = sized_project.model_copy(update={"machine": m})
     hel = next(L.id for L in prj.layers if L.type == "helical")
     prog = generate(prj, [prj.layers[0].id, hel])
     mode = "G94"
-    letters = {m.carriage.letter, m.crossfeed.letter, m.mandrel.letter} | ({m.eye.letter} if m.axes_count == 4 else set())
+    letters = {m.carriage.letter, m.mandrel.letter} | ({m.crossfeed.letter} if m.axes_count >= 3 else set()) \
+        | ({m.eye.letter} if m.axes_count == 4 else set())
     n_moves = 0
     for ln in prog.lines:
         code = re.sub(r"\(.*?\)", "", ln).strip()
