@@ -301,6 +301,22 @@ def report_html(project: S.Project, progressive: bool = False) -> str:
             for n in pr.notes:
                 P.append(f"<p class='note'>{html.escape(n)}</p>")
 
+    cr = res.cure
+    if cr is not None and cr.sections:
+        P.append("<h3>Oven cure: temperature and degree of cure through the wall</h3>")
+        sec = max(cr.sections, key=lambda x: x.thickness)
+        P.append(svg_chart([("oven air", sec.times, sec.oven), ("liner", sec.times, sec.t_liner),
+                            ("laminate inner", sec.times, sec.t_inner), ("laminate outer", sec.times, sec.t_outer)],
+                           f"time [min] ({sec.name}, {sec.thickness:.1f} mm)", "temperature [°C]", height=220))
+        P.append(svg_chart([("inner", sec.times, sec.a_inner), ("mid", sec.times, sec.a_mid),
+                            ("outer", sec.times, sec.a_outer)], "time [min]", "degree of cure", height=180))
+        P.append(_table(["Section", "Thickness", "Exotherm", "Peak liner", "Final cure", "Tg"], [
+            [html.escape(x.name), f"{x.thickness:.1f} mm", f"{x.overshoot:.1f} K", f"{x.peak_liner:.0f} °C",
+             f"{x.min_cure:.3f}", f"{x.tg_final:.0f} °C"] for x in cr.sections]))
+        P.append("<p class='note'>Cycle: " + html.escape(", ".join(
+            f"{c.ramp:g} K/min to {c.temperature:g} °C, {c.hold:g} min" for c in cr.cycle))
+                 + f"; about {cr.duration / 60:.1f} h incl. cooling. Generic resin kinetics: calibrate with DSC.</p>")
+
     # manufacturing
     P.append("<h2>5. Manufacturing</h2>")
     total_time = sum(L.wind_time for L in res.layers)
@@ -341,6 +357,8 @@ def report_html(project: S.Project, progressive: bool = False) -> str:
         "Liner fatigue uses indicative S-N data (SWT); confirm by cycle testing.",
         "Matrix cracking: Puck inter-fibre failure with a 0.1 stiffness floor; progressive analysis (if included) "
         "is an axisymmetric nonlinear shell without delamination.",
+        "Cure: 1D conduction through the wall (adiabatic inside, convective oven film) with Kamal-Sourour kinetics "
+        "and diffusion control near vitrification; generic kinetic parameters per resin family.",
         "Stress rupture: Weibull power-law breakdown with generic parameters calibrated to the standards' stress "
         "ratios, not to test data for this fibre/resin system.",
         "Winding-tension loss uses a thin-ring model without viscoelastic relaxation or resin squeeze-out.",

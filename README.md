@@ -71,6 +71,10 @@ truth for fields and units). Server-side saves go to `~/.windlab/projects`
   failure (modes A/B/C) with stiffness degradation, fibre failure per ply, full load history (cure,
   autofrettage, proof, MEOP) then a burst ramp; reports first matrix crack, first fibre failure, liner
   yield, the burst location and damage maps. The cylinder model also includes Puck matrix cracking.
+- **Oven cure simulation**: transient conduction through liner + laminate (cylinder and thickest dome
+  section) with Kamal-Sourour cure kinetics, vitrification (DiBenedetto Tg) and reaction heat; exotherm
+  (vs. a non-reacting wall), peak liner temperature, final degree of cure and Tg vs the service temperature;
+  editable cure cycles, generic kinetics per resin (calibrate with DSC).
 - **Stress-rupture reliability**: Weibull power-law breakdown (Coleman/Phoenix, as in NASA COPV
   assessments) with cumulative damage over autofrettage, proof and service, credit for surviving the proof
   test, failure probability over the service life per ply group, allowed stress ratio and life to target.

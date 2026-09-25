@@ -38,7 +38,7 @@ def _efficiency_for(project: S.Project, burst_target: float) -> float | None:
     def pb(eta: float) -> float:
         p = project.model_copy(update={"composite": project.composite.model_copy(
             update={"translation_efficiency": eta})})
-        return analyze(p).structural.burst_pressure
+        return analyze(p, with_cure=False).structural.burst_pressure
 
     e0 = project.composite.translation_efficiency
     b0 = pb(e0)

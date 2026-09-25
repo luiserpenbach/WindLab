@@ -50,6 +50,18 @@ class Resin:
     Yt: float = 55.0  # UD ply transverse tensile strength [MPa] (matrix dominated)
     Yc: float = 200.0  # UD ply transverse compressive strength [MPa]
     S12: float = 75.0  # UD ply in-plane shear strength [MPa]
+    # cure kinetics (Kamal-Sourour: da/dt = (k1 + k2 a^m)(1 - a)^n, k_i = A_i exp(-E_i / R T)), generic values
+    A1: float = 5.0e5  # [1/s]
+    E1: float = 75_000.0  # [J/mol]
+    A2: float = 5.0e6  # [1/s]
+    E2: float = 75_000.0  # [J/mol]
+    m: float = 0.5
+    n: float = 1.5
+    heat: float = 350.0  # heat of reaction [J/g resin]
+    tg0: float = -20.0  # Tg of the uncured resin [degC]
+    tg_inf: float = 140.0  # Tg of the fully cured resin [degC]
+    tg_lambda: float = 0.45  # DiBenedetto parameter
+    cycle: tuple = ((2.0, 90.0, 120.0), (2.0, 130.0, 240.0))  # default cure cycle: (ramp K/min, degC, hold min)
 
     @property
     def G(self) -> float:
@@ -75,6 +87,8 @@ class LinerMaterial:
     strain_limit: float = 0.0  # polymer: allowable liner strain at proof [-] (0: not applicable)
     h2_permeability: float = 0.0  # H2 permeability at 20 degC [Barrer]
     perm_activation: float = 0.0  # permeability activation energy [kJ/mol]
+    conductivity: float = 150.0  # thermal conductivity [W/(m K)]
+    heat_capacity: float = 900.0  # specific heat [J/(kg K)]
 
     @property
     def polymer(self) -> bool:
@@ -115,9 +129,17 @@ RESINS: dict[str, Resin] = {
         Resin("Epoxy-DGEBA", "Epoxy DGEBA / anhydride (wet winding)", 3100, 0.35, 1.20, 60e-6,
               "2 h at 90 degC + 4 h at 130 degC, rotating; ramp <= 2 K/min", 130.0),
         Resin("Epoxy-toughened", "Toughened epoxy (towpreg)", 2900, 0.36, 1.18, 60e-6,
-              "2 h at 120 degC, rotating; ramp <= 2 K/min", 120.0),
+              "2 h at 120 degC, rotating; ramp <= 2 K/min", 120.0,
+              A1=2.0e5, E1=70_000.0, A2=2.0e6, E2=70_000.0, heat=400.0, tg0=-10.0, tg_inf=135.0,
+              cycle=((2.0, 120.0, 150.0),)),
         Resin("Epoxy-HT", "High-Tg epoxy / amine", 3400, 0.34, 1.22, 55e-6,
-              "2 h at 80 degC + 2 h at 150 degC + 2 h at 180 degC post-cure", 180.0),
+              "2 h at 80 degC + 2 h at 150 degC + 2 h at 180 degC post-cure", 180.0,
+              A1=8.0e5, E1=80_000.0, A2=8.0e6, E2=80_000.0, heat=450.0, tg0=-15.0, tg_inf=200.0,
+              cycle=((1.5, 80.0, 120.0), (1.5, 150.0, 120.0), (1.5, 180.0, 120.0))),
+        Resin("Epoxy-LT", "Low-temperature epoxy / amine (Type IV liners)", 3000, 0.35, 1.16, 65e-6,
+              "2 h at 60 degC + 6 h at 85 degC, rotating; ramp <= 1 K/min", 85.0,
+              A1=7.0e3, E1=55_000.0, A2=7.0e4, E2=55_000.0, heat=420.0, tg0=-25.0, tg_inf=125.0,
+              tg_lambda=0.5, cycle=((1.0, 60.0, 120.0), (1.0, 85.0, 360.0))),
     ]
 }
 
@@ -127,16 +149,16 @@ LINERS: dict[str, LinerMaterial] = {
         LinerMaterial("AA6061-T6", "Aluminium 6061-T6", 68_900, 0.33, 276, 310, 2.70, 0.12, 386, -0.071),
         LinerMaterial("AA6061-T62", "Aluminium 6061-T62", 68_900, 0.33, 262, 296, 2.70, 0.10, 380, -0.071),
         LinerMaterial("AA7075-T73", "Aluminium 7075-T73", 71_700, 0.33, 434, 503, 2.81, 0.10, 900, -0.10, 23.4e-6,
-                      32.0),
+                      32.0, conductivity=155.0, heat_capacity=960.0),
         LinerMaterial("Ti-6Al-4V", "Titanium Ti-6Al-4V (annealed)", 113_800, 0.34, 880, 950, 4.43, 0.14, 1500, -0.085,
-                      8.6e-6, 75.0),
+                      8.6e-6, 75.0, conductivity=6.7, heat_capacity=526.0),
         LinerMaterial("SS316L", "Stainless 316L (annealed)", 193_000, 0.30, 290, 580, 7.99, 0.40, 1000, -0.114,
-                      16.0e-6, 200.0),
+                      16.0e-6, 200.0, conductivity=16.3, heat_capacity=500.0),
         # Type IV liners (indicative values; the liner carries almost no load). Permeability: H2, 20 degC
         LinerMaterial("HDPE", "HDPE (rotomoulded / blow-moulded, Type IV)", 1_000, 0.42, 24, 30, 0.955, 0.5, 60,
-                      -0.1, 150e-6, 2.0, "polymer", 85.0, 0.03, 1.3, 35.0),
+                      -0.1, 150e-6, 2.0, "polymer", 85.0, 0.03, 1.3, 35.0, 0.45, 1900.0),
         LinerMaterial("PA6", "Polyamide 6 (conditioned, Type IV)", 2_000, 0.39, 55, 70, 1.13, 0.3, 120, -0.1,
-                      90e-6, 3.0, "polymer", 120.0, 0.025, 0.15, 40.0),
+                      90e-6, 3.0, "polymer", 120.0, 0.025, 0.15, 40.0, 0.25, 1700.0),
     ]
 }
 
@@ -229,7 +251,9 @@ def get_fiber(fid: str, lib=None) -> Fiber:
 def get_resin(rid: str, lib=None) -> Resin:
     for r in getattr(lib, "resins", None) or []:
         if r.id == rid:
-            return Resin(r.id, r.name, r.E, r.nu, r.density, r.cte, r.cure, r.cure_temperature, r.Yt, r.Yc, r.S12)
+            return Resin(r.id, r.name, r.E, r.nu, r.density, r.cte, r.cure, r.cure_temperature, r.Yt, r.Yc, r.S12,
+                         r.A1, r.E1, r.A2, r.E2, r.m, r.n, r.heat, r.tg0, r.tg_inf, r.tg_lambda,
+                         tuple((c.ramp, c.temperature, c.hold) for c in r.cycle) or Resin.cycle)
     if rid not in RESINS:
         raise KeyError(f"Unknown resin '{rid}'")
     return RESINS[rid]
@@ -240,7 +264,7 @@ def get_liner(lid: str, lib=None) -> LinerMaterial:
         if m.id == lid:
             return LinerMaterial(m.id, m.name, m.E, m.nu, m.yield_, m.ultimate, m.density, m.elongation,
                                  m.fatigue_coeff, m.fatigue_exp, m.cte, m.k_ic, m.kind, m.max_temp, m.strain_limit,
-                                 m.h2_permeability, m.perm_activation)
+                                 m.h2_permeability, m.perm_activation, m.conductivity, m.heat_capacity)
     if lid not in LINERS:
         raise KeyError(f"Unknown liner material '{lid}'")
     return LINERS[lid]

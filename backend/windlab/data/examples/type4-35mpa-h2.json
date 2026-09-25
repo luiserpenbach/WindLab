@@ -39,12 +39,30 @@
   },
   "composite": {
    "fiber": "T700S-24K",
-   "resin": "Epoxy-DGEBA",
+   "resin": "Epoxy-LT",
    "fiber_volume_fraction": 0.6,
    "translation_efficiency": 0.82,
    "cure_temperature": 80.0,
    "strength_weibull_shape": null,
-   "rupture_exponent": null
+   "rupture_exponent": null,
+   "tg_margin": 10.0,
+   "cure_cycle": [
+    {
+     "ramp": 0.5,
+     "temperature": 50,
+     "hold": 240
+    },
+    {
+     "ramp": 0.5,
+     "temperature": 70,
+     "hold": 240
+    },
+    {
+     "ramp": 0.5,
+     "temperature": 80,
+     "hold": 480
+    }
+   ]
   },
   "materials": {
    "fibers": [],

@@ -65,6 +65,17 @@ Example (1 L desktop vessel, `grbl-10mpa-1l`), hoop strain at the cylinder mid-p
 | Burst-test ramp to the median strength | P = 0.5; Weibull shape of the implied strength = beta | exact |
 | Life to target / allowed stress ratio | inverse of the failure probability | 1e-4 |
 
+## Cure
+
+| Quantity | Reference | Agreement |
+|---|---|---|
+| Degree of cure with the wall at the oven temperature | kinetics ODE integrated independently (scipy) | 0.01 |
+| Exotherm with zero heat of reaction | 0 | exact |
+| Exotherm vs laminate thickness | increases | monotonic |
+
+Kinetic parameters are generic per resin family (anhydride / amine / towpreg); they reproduce typical
+datasheet cure behaviour but not a specific product. Fit A, E, m, n and the heat of reaction to DSC data.
+
 ## Type IV
 
 | Quantity | Reference | Agreement |

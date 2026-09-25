@@ -26,7 +26,7 @@ class OptResult:
 
 def _evaluate(project: S.Project, layers: list[S.Layer]):
     try:
-        res = analyze(project.model_copy(update={"layers": layers}))
+        res = analyze(project.model_copy(update={"layers": layers}), with_cure=False)
     except DesignError:
         return None
     # winding tension is a process setting (fixed by the tension schedule), not a layup constraint

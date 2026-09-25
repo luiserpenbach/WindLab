@@ -1,6 +1,7 @@
 import type {
   CompositeSpec,
   ContinuousSpec,
+  CureStep,
   CustomFiber,
   CustomLiner,
   CustomResin,
@@ -96,6 +97,11 @@ export function defaultProject(): Project {
       fiber_volume_fraction: 0.6,
       translation_efficiency: 0.82,
       cure_temperature: 120,
+      cure_cycle: [],
+      oven_htc: 25,
+      max_exotherm: 15,
+      min_cure: 0.9,
+      tg_margin: 15,
       strength_weibull_shape: null,
       rupture_exponent: null,
     },
@@ -194,7 +200,49 @@ export function newCustomFiber(id: string): CustomFiber {
 }
 
 export function newCustomResin(id: string): CustomResin {
-  return { id, name: id, E: 3100, nu: 0.35, density: 1.2, cte: 60e-6 };
+  return {
+    id,
+    name: id,
+    E: 3100,
+    nu: 0.35,
+    density: 1.2,
+    cte: 60e-6,
+    A1: 5.0e5,
+    E1: 75000,
+    A2: 5.0e6,
+    E2: 75000,
+    m: 0.5,
+    n: 1.5,
+    heat: 350,
+    tg0: -20,
+    tg_inf: 140,
+    tg_lambda: 0.45,
+    cycle: [],
+  };
+}
+
+/** A new cure step (backend default ramp 2 K/min). */
+export function newCureStep(temperature = 120, hold = 120, ramp = 2): CureStep {
+  return { ramp, temperature, hold };
+}
+
+/**
+ * Cure cycle from a project file or the materials catalog: CureStep records or
+ * built-in [ramp, T, hold] triples; invalid steps are dropped.
+ */
+export function normalizeCureCycle(raw: unknown): CureStep[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CureStep[] = [];
+  for (const s of raw as unknown[]) {
+    const [ramp, temperature, hold] = Array.isArray(s)
+      ? s
+      : s && typeof s === 'object'
+        ? [(s as CureStep).ramp ?? 2, (s as CureStep).temperature, (s as CureStep).hold]
+        : [];
+    if (finite(ramp) && ramp > 0 && finite(temperature) && finite(hold) && hold >= 0)
+      out.push({ ramp, temperature, hold });
+  }
+  return out;
 }
 
 export function newCustomLiner(id: string): CustomLiner {
@@ -216,6 +264,8 @@ export function newCustomLiner(id: string): CustomLiner {
     strain_limit: 0,
     h2_permeability: 0,
     perm_activation: 0,
+    conductivity: 150,
+    heat_capacity: 900,
   };
 }
 
@@ -238,6 +288,9 @@ function normalizeRecords<T extends { id: string; name: string }>(raw: unknown, 
     }
     if (rec.kind != null && rec.kind !== 'metal' && rec.kind !== 'polymer')
       rec.kind = (d as Record<string, unknown>).kind;
+    // resins: the recommended cure cycle (list of steps)
+    if (Array.isArray((d as Record<string, unknown>).cycle))
+      rec.cycle = normalizeCureCycle((r as Record<string, unknown>).cycle);
     out.push(rec as T);
   }
   return out;
@@ -316,6 +369,11 @@ function normalizeComposite(d: CompositeSpec, raw: Partial<CompositeSpec> | unde
   const c = { ...d, ...(raw ?? {}) };
   c.strength_weibull_shape = finite(c.strength_weibull_shape) ? c.strength_weibull_shape : null;
   c.rupture_exponent = finite(c.rupture_exponent) ? c.rupture_exponent : null;
+  c.cure_cycle = normalizeCureCycle(c.cure_cycle);
+  c.oven_htc = finite(c.oven_htc) && c.oven_htc > 0 ? c.oven_htc : d.oven_htc;
+  c.max_exotherm = finite(c.max_exotherm) && c.max_exotherm > 0 ? c.max_exotherm : d.max_exotherm;
+  c.min_cure = finite(c.min_cure) && c.min_cure > 0 && c.min_cure <= 1 ? c.min_cure : d.min_cure;
+  c.tg_margin = finite(c.tg_margin) && c.tg_margin >= 0 ? c.tg_margin : d.tg_margin;
   return c;
 }
 

@@ -34,7 +34,7 @@ def traveller(project: S.Project) -> dict[str, str]:
                 ["Liner", f"{lmat.name}, R {lin.radius} mm, cylinder {lin.cyl_length} mm, wall {lin.wall_thickness} mm, {lin.dome_type} domes"],
                 ["Bosses", f"A {lin.boss_radius_a} mm / B {lin.boss_radius_b} mm radius"],
                 ["MEOP / proof", f"{req.meop:.1f} MPa / {req.meop * req.proof_factor:.1f} MPa"],
-                ["Autofrettage", f"{st.autofrettage_pressure:.1f} MPa" if st else "-"],
+                ["Autofrettage", "none (Type IV)" if lmat.polymer else (f"{st.autofrettage_pressure:.1f} MPa" if st else "-")],
                 ["Predicted burst", f"{st.burst_pressure:.1f} MPa ({st.burst_mode}-first), required {st.required_burst:.1f} MPa" if st else "-"],
                 ["Fibre / resin", f"{fiber.name} / {resin.name}, Vf {comp.fiber_volume_fraction:.2f}"],
                 ["Mass", f"liner {res.mass.liner:.0f} g, fibre {res.mass.fiber:.0f} g, resin {res.mass.resin:.0f} g, total {res.mass.total:.0f} g"],
@@ -67,10 +67,16 @@ def traveller(project: S.Project) -> dict[str, str]:
         f"({mach.carriage_offset} mm)",
         "- [ ] Resin mixed at ______ (time), bath temperature ______ °C, pot life until ______",
         "- [ ] Tension calibrated; band width measured at the eye: ______ mm",
-        "",
-        "## Winding sequence",
-        "",
     ]
+    sup = next((c for c in res.checks if c.id == "liner.support"), None)
+    if sup is not None:
+        md.append(f"- [ ] Liner pressurised for winding: ≥ **{max(sup.value or 0.0, 0.0) * 10:.1f} bar** "
+                  "(polymer liner; check it holds pressure). Actual: ______ bar")
+    md += ["", "## Winding sequence", ""]
+    if project.continuous.enabled:
+        md += [f"Continuous winding: **do not cut the roving between layers**. The G-code contains the transition "
+               f"passes (angle step ≤ {project.continuous.max_angle_step:g}°); pauses between layers are skipped.",
+               ""]
     rows = []
     for L in res.layers:
         spec = project.layers[L.index]
@@ -93,15 +99,38 @@ def traveller(project: S.Project) -> dict[str, str]:
         "",
         "## Cure",
         "",
-        f"- [ ] Rotating cure: {resin.cure or 'per resin datasheet'} (design stress-free temperature "
-        f"{comp.cure_temperature:g} °C). Actual: ramp ______ °C/min to ______ °C, hold ______ h",
-        "- [ ] Cure log attached; post-cure visual inspection (dry spots, wrinkles, bridging at the domes)",
+    ]
+    cr = res.cure
+    if cr is not None:
+        md.append(_table(["Step", "Ramp [K/min]", "Set point [°C]", "Hold [min]", "Actual (ramp / T / hold)"],
+                         [[str(i + 1), f"{c.ramp:g}", f"{c.temperature:g}", f"{c.hold:g}", "______ / ______ / ______"]
+                          for i, c in enumerate(cr.cycle)]))
+        md += ["", f"Then cool at ≤ 2 K/min to ambient; total about {cr.duration / 60:.1f} h. Keep the part rotating.",
+               "", _table(["Predicted", *[x.name for x in cr.sections]], [
+                   ["Composite thickness", *[f"{x.thickness:.1f} mm" for x in cr.sections]],
+                   ["Exotherm (rise from reaction heat)", *[f"{x.overshoot:.1f} K" for x in cr.sections]],
+                   ["Peak liner temperature", *[f"{x.peak_liner:.0f} °C" for x in cr.sections]],
+                   ["Final degree of cure (least cured)", *[f"{x.min_cure:.2f}" for x in cr.sections]],
+                   ["Tg (least cured)", *[f"{x.tg_final:.0f} °C" for x in cr.sections]],
+               ]), ""]
+    else:
+        md.append(f"- [ ] Rotating cure: {resin.cure or 'per resin datasheet'}")
+    md += [
+        "- [ ] Thermocouples on the laminate surface and, if possible, at the liner; cure log attached",
+        "- [ ] Post-cure visual inspection (dry spots, wrinkles, bridging at the domes)",
         "- [ ] Mass after cure: ______ g (predicted " + f"{res.mass.total:.0f} g)",
         "",
         "## Autofrettage and proof",
         "",
     ]
-    if st:
+    if st and lmat.polymer:
+        md += [
+            "- [ ] No autofrettage (Type IV).",
+            f"- [ ] Proof: **{req.meop * req.proof_factor:.1f} MPa**, hold ≥ {req.hold_time:g} s; record volumetric "
+            f"expansion (predicted {st.expansion_af_total:.0f} mL total)",
+            "- [ ] Leak / permeation test at MEOP: ______",
+        ]
+    elif st:
         md += [
             f"- [ ] Autofrettage: pressurise to **{st.autofrettage_pressure:.1f} MPa**, hold 60 s, vent; record volumetric expansion",
             f"- [ ] Proof: **{req.meop * req.proof_factor:.1f} MPa**, hold ≥ 60 s; permanent volumetric expansion ≤ 5 % of total",

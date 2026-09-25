@@ -5,10 +5,12 @@ import { worstStatus } from '../state/analysis';
 /**
  * Check ids are namespaced by the backend (core/design.py): `geo.*`,
  * `layer.<id>[.slip|.path]`, `layup.*` (e.g. `layup.bridging`), `tension.*`,
- * `burst*`, `sr.*` (incl. `sr.temp`, `sr.reliability`), `af.*`, `liner.*` (incl. `liner.temp`, `liner.lbb`;
+ * `burst*`, `sr.*` (incl. `sr.temp`, `sr.reliability`), `af.*`, `liner.*` (incl. `liner.temp`, `liner.lbb`,
+ * `liner.cure_temp`;
  * Type IV: `liner.strain`, `liner.cure`, `liner.service_temp`, `liner.permeation`, and `liner.support`,
  * which is routed to the layup),
- * `fatigue`, `dome.*`, `fe.*` (shell FE). Checks also carry `refs` (layer ids);
+ * `fatigue`, `dome.*`, `fe.*` (shell FE), `cure.*` (oven cure: `cure.exotherm`, `cure.degree`, `cure.tg`;
+ * routed to the Materials step, where the resin and cure cycle are set). Checks also carry `refs` (layer ids);
  * their rows link to those layers.
  * Known prefixes are routed explicitly; anything else falls back to keyword
  * matching, then to "analysis".
@@ -18,7 +20,7 @@ const PREFIX: [StepId, RegExp][] = [
   ['layup', /^liner\.support$/],
   ['vessel', /^(geo|liner|af|fatigue)(\.|$)/],
   ['layup', /^(layer|layup|dome|pattern|tension)(\.|$)/],
-  ['materials', /^(mat|material|composite)(\.|$)/],
+  ['materials', /^(mat|material|composite|cure)(\.|$)/],
   ['machine', /^(machine|mach|axis|kin)(\.|$)/],
   ['analysis', /^(burst|sr|mass|fe)(\.|$)/],
 ];

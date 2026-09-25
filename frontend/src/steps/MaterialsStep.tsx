@@ -1,10 +1,11 @@
-import { useId, useSyncExternalStore } from 'react';
-import type { CompositeSpec, Fiber, LinerKind, Resin } from '../api/types';
+import { useId, useState, useSyncExternalStore } from 'react';
+import { api, errorMessage } from '../api/client';
+import type { CompositeSpec, CureStep, Fiber, LinerKind, Resin } from '../api/types';
 import { Field, NumberField, NumberInput, Section, SelectField, SliderField, Switch } from '../components/fields';
 import { Icon } from '../components/Icon';
 import { Banner, Button, Empty, Modal } from '../components/ui';
 import { useAnalysis } from '../state/analysis';
-import { newCustomFiber, newCustomLiner, newCustomResin } from '../state/defaults';
+import { newCureStep, newCustomFiber, newCustomLiner, newCustomResin, normalizeCureCycle } from '../state/defaults';
 import {
   findMat,
   materialUsage,
@@ -20,7 +21,7 @@ import { ChecksList, LinerTypeBadge } from './shared';
 import { checksForStep } from './stepStatus';
 
 // ------------------------------------------------------------------ field specs (table + editor)
-type Rec = Record<string, number | string>;
+type Rec = Record<string, number | string | CureStep[]>;
 
 interface NumSpec {
   key: string;
@@ -59,6 +60,31 @@ const RESIN_FIELDS: NumSpec[] = [
   { key: 'density', label: 'Density', short: 'ρ', unit: 'g/cm³', gt: 0, step: 0.01 },
   { key: 'cte', label: 'CTE', short: 'α', unit: CTE_UNIT, scale: 1e6, step: 1 },
 ];
+
+/** Cure kinetics (DSC fit); shown in the editor only. */
+const RESIN_KINETICS_FIELDS: NumSpec[] = [
+  {
+    key: 'A1',
+    label: 'Pre-exponential A₁',
+    short: 'A₁',
+    unit: '1/s',
+    min: 0,
+    step: 1e4,
+    hint: 'k₁ = A₁ exp(−E₁ / RT)',
+  },
+  { key: 'E1', label: 'Activation energy E₁', short: 'E₁', unit: 'kJ/mol', scale: 1e-3, gt: 0, step: 1 },
+  { key: 'A2', label: 'Pre-exponential A₂', short: 'A₂', unit: '1/s', min: 0, step: 1e5, hint: 'Autocatalytic k₂' },
+  { key: 'E2', label: 'Activation energy E₂', short: 'E₂', unit: 'kJ/mol', scale: 1e-3, gt: 0, step: 1 },
+  { key: 'm', label: 'Autocatalytic exponent m', short: 'm', unit: '', min: 0, step: 0.05 },
+  { key: 'n', label: 'Reaction order n', short: 'n', unit: '', gt: 0, step: 0.05 },
+  { key: 'heat', label: 'Heat of reaction', short: 'ΔH', unit: 'J/g', min: 0, step: 10, hint: 'Per gram of resin' },
+  { key: 'tg0', label: 'Tg uncured', short: 'Tg₀', unit: '°C', step: 5 },
+  { key: 'tg_inf', label: 'Tg fully cured', short: 'Tg∞', unit: '°C', step: 5 },
+  { key: 'tg_lambda', label: 'DiBenedetto λ', short: 'λ', unit: '', gt: 0, max: 1, step: 0.05 },
+];
+
+/** Default recommended cycle of a resin without one (backend Resin.cycle). */
+const DEFAULT_RESIN_CYCLE: CureStep[] = [newCureStep(90, 120, 2), newCureStep(130, 240, 2)];
 
 const LINER_FIELDS: NumSpec[] = [
   { key: 'E', label: 'Modulus', short: 'E', unit: 'GPa', scale: 1e-3, gt: 0, step: 1 },
@@ -121,6 +147,12 @@ const POLYMER_LINER_FIELDS: NumSpec[] = [
   },
 ];
 
+/** Thermal properties for the oven cure simulation; shown in the editor only. */
+const LINER_THERMAL_FIELDS: NumSpec[] = [
+  { key: 'conductivity', label: 'Thermal conductivity', short: 'k', unit: 'W/mK', gt: 0, step: 1 },
+  { key: 'heat_capacity', label: 'Specific heat', short: 'cp', unit: 'J/kgK', gt: 0, step: 10 },
+];
+
 const KIND_META: Record<MatKind, { one: string; many: string; fields: NumSpec[]; fresh: (id: string) => Rec }> = {
   fibers: {
     one: 'fibre',
@@ -147,6 +179,8 @@ function toCustom(kind: MatKind, rec: Rec): Rec {
   const base = KIND_META[kind].fresh(String(rec.id));
   const out: Rec = {};
   for (const k of Object.keys(base)) out[k] = rec[k] ?? base[k];
+  // built-in resins list their cycle as [ramp, T, hold] triples
+  if (Array.isArray(base.cycle)) out.cycle = normalizeCureCycle(rec.cycle);
   return out;
 }
 
@@ -266,6 +300,264 @@ function ResinCard({ e }: { e: MatEntry<Resin> }) {
   );
 }
 
+// ------------------------------------------------------------------ cure cycle
+/** Heat-up ramps + holds from ambient [min] (the oven cool-down is not included). */
+function cycleMinutes(steps: CureStep[], ambient: number): number {
+  let T = ambient;
+  let t = 0;
+  for (const s of steps) {
+    t += Math.abs(s.temperature - T) / s.ramp + s.hold;
+    T = s.temperature;
+  }
+  return t;
+}
+
+const fmtMinutes = (min: number) => (min >= 90 ? `${sig(min / 60, 3)} h` : `${sig(min, 3)} min`);
+
+/**
+ * Cure-cycle steps (ramp, set point, hold). Editable with `onChange`; read-only
+ * otherwise, where `capped` marks set points limited to the cure temperature.
+ */
+function CureStepsTable({
+  steps,
+  onChange,
+  capped,
+  label,
+}: {
+  steps: CureStep[];
+  onChange?: (steps: CureStep[]) => void;
+  capped?: boolean[];
+  label: string;
+}) {
+  const setStep = (i: number, patch: Partial<CureStep>) =>
+    onChange?.(steps.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+  const add = () => {
+    const last = steps[steps.length - 1];
+    onChange?.([...steps, last ? newCureStep(last.temperature + 20, 60, last.ramp) : newCureStep()]);
+  };
+  return (
+    <>
+      <div className="table-scroll">
+        <table className="data-table compact cure-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th className="num">
+                Ramp <span className="th-unit">K/min</span>
+              </th>
+              <th className="num">
+                Set point <span className="th-unit">°C</span>
+              </th>
+              <th className="num">
+                Hold <span className="th-unit">min</span>
+              </th>
+              {onChange ? (
+                <th className="lib-act">
+                  <span className="sr-only">Actions</span>
+                </th>
+              ) : null}
+            </tr>
+          </thead>
+          <tbody>
+            {steps.map((s, i) =>
+              onChange ? (
+                <tr key={i}>
+                  <td>{i + 1}</td>
+                  <td>
+                    <NumberInput
+                      ariaLabel={`${label} step ${i + 1} ramp`}
+                      value={s.ramp}
+                      gt={0}
+                      step={0.5}
+                      onCommit={(v) => setStep(i, { ramp: v })}
+                    />
+                  </td>
+                  <td>
+                    <NumberInput
+                      ariaLabel={`${label} step ${i + 1} set point`}
+                      value={s.temperature}
+                      min={-50}
+                      max={400}
+                      step={5}
+                      onCommit={(v) => setStep(i, { temperature: v })}
+                    />
+                  </td>
+                  <td>
+                    <NumberInput
+                      ariaLabel={`${label} step ${i + 1} hold`}
+                      value={s.hold}
+                      min={0}
+                      step={10}
+                      onCommit={(v) => setStep(i, { hold: v })}
+                    />
+                  </td>
+                  <td className="row-actions lib-act">
+                    <button
+                      type="button"
+                      className="danger"
+                      aria-label={`Remove ${label} step ${i + 1}`}
+                      title="Remove step"
+                      onClick={() => onChange(steps.filter((_, j) => j !== i))}
+                    >
+                      <Icon name="trash" size={13} />
+                    </button>
+                  </td>
+                </tr>
+              ) : (
+                <tr key={i}>
+                  <td>{i + 1}</td>
+                  <td className="num">{sig(s.ramp, 3)}</td>
+                  <td
+                    className="num"
+                    title={capped?.[i] ? 'Capped at the composite cure (stress-free) temperature' : undefined}
+                  >
+                    {sig(s.temperature, 4)}
+                    {capped?.[i] ? ' *' : ''}
+                  </td>
+                  <td className="num">{sig(s.hold, 4)}</td>
+                </tr>
+              ),
+            )}
+          </tbody>
+        </table>
+      </div>
+      {onChange ? (
+        <div className="toolbar cure-toolbar">
+          <Button size="sm" icon="plus" onClick={add}>
+            Add step
+          </Button>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function CureCycleEditor({
+  c,
+  resin,
+  set,
+}: {
+  c: CompositeSpec;
+  resin: Resin | undefined;
+  set: (patch: Partial<CompositeSpec>, key: string) => void;
+}) {
+  const { project } = useProject();
+  const { result } = useAnalysis();
+  const ambient = project.requirements.temperature_ref;
+  // Recommended cycle: catalog triples / custom steps; a resin without one uses the backend default.
+  const known = resin != null && resin.cycle !== undefined;
+  const own = normalizeCureCycle(resin?.cycle);
+  const rec = own.length || !known ? own : DEFAULT_RESIN_CYCLE;
+  const capped = rec.map((s) => s.temperature > c.cure_temperature);
+  const recommended = rec.map((s) => ({ ...s, temperature: Math.min(s.temperature, c.cure_temperature) }));
+  const useResin = c.cure_cycle.length === 0;
+  const steps = useResin ? recommended : c.cure_cycle;
+  const peak = steps.reduce((m, s) => Math.max(m, s.temperature), -Infinity);
+  const cure = result?.cure ?? null;
+  const [sugg, setSugg] = useState<{ busy: boolean; notes: string[]; error: string | null }>({
+    busy: false,
+    notes: [],
+    error: null,
+  });
+  const suggest = async () => {
+    setSugg({ busy: true, notes: [], error: null });
+    try {
+      const r = await api.suggestCure(project);
+      set({ cure_cycle: r.cure_cycle }, 'cycle');
+      setSugg({ busy: false, notes: r.notes, error: null });
+    } catch (e) {
+      setSugg({ busy: false, notes: [], error: errorMessage(e) });
+    }
+  };
+  return (
+    <div className="card subtle cure-cycle">
+      <div className="card-title">Cure cycle</div>
+      <div className="toolbar">
+        <Button
+          size="sm"
+          icon="wand"
+          disabled={sugg.busy}
+          onClick={suggest}
+          title="Shortest cycle meeting the exotherm, degree-of-cure, Tg and liner-temperature limits (up to a minute)"
+        >
+          {sugg.busy ? 'Searching cycles…' : 'Suggest cycle'}
+        </Button>
+      </div>
+      {sugg.error ? <Banner>{sugg.error}</Banner> : null}
+      {sugg.notes.length ? <p className="muted small">{sugg.notes.join(' · ')}</p> : null}
+      <Switch
+        checked={useResin}
+        label="Use resin recommended cycle"
+        onChange={(on) => set({ cure_cycle: on ? [] : recommended.length ? recommended : [newCureStep()] }, 'cycle')}
+      />
+      {useResin && !recommended.length ? (
+        <p className="muted small">
+          {resin ? 'The materials catalog has no recommended cycle for this resin.' : 'Unknown resin.'}
+        </p>
+      ) : (
+        <CureStepsTable
+          steps={steps}
+          label="Cure cycle"
+          capped={useResin ? capped : undefined}
+          onChange={useResin ? undefined : (v) => set({ cure_cycle: v }, 'cycle')}
+        />
+      )}
+      {steps.length ? (
+        <p className="muted small">
+          {useResin
+            ? `Recommended cycle of ${resin?.name ?? 'the resin'}${capped.some(Boolean) ? `; * set point capped at the ${sig(c.cure_temperature, 4)} °C cure temperature` : ''}. `
+            : ''}
+          Heat-up and holds from {sig(ambient, 3)} °C: {fmtMinutes(cycleMinutes(steps, ambient))}
+          {cure ? ` (simulated incl. cool-down ${fmtMinutes(cure.duration)})` : ''}.
+          {!useResin && Math.abs(peak - c.cure_temperature) > 1 ? (
+            <>
+              {' '}
+              Highest set point {sig(peak, 4)} °C ≠ cure (stress-free) temperature {sig(c.cure_temperature, 4)} °C.
+            </>
+          ) : null}
+        </p>
+      ) : null}
+      <NumberField
+        label="Oven heat transfer"
+        unit="W/m²K"
+        value={c.oven_htc}
+        gt={0}
+        step={5}
+        hint="Convective coefficient oven air → rotating part (≈ 10–20 still air, 25–50 forced convection)"
+        onCommit={(v) => set({ oven_htc: v }, 'htc')}
+      />
+      <NumberField
+        label="Max. exotherm"
+        unit="K"
+        value={c.max_exotherm}
+        gt={0}
+        step={1}
+        hint="Allowed laminate temperature rise from the reaction heat"
+        onCommit={(v) => set({ max_exotherm: v }, 'exo')}
+      />
+      <NumberField
+        label="Min. degree of cure"
+        unit="%"
+        value={Number((c.min_cure * 100).toPrecision(10))}
+        gt={0}
+        max={100}
+        step={1}
+        hint="Required final degree of cure everywhere in the laminate"
+        onCommit={(v) => set({ min_cure: Number((v / 100).toPrecision(10)) }, 'mincure')}
+      />
+      <NumberField
+        label="Tg margin"
+        unit="K"
+        value={c.tg_margin}
+        min={0}
+        step={5}
+        hint={`Required Tg above the max. service temperature (${sig(project.requirements.temperature_max, 3)} °C)`}
+        onCommit={(v) => set({ tg_margin: v }, 'tgm')}
+      />
+    </div>
+  );
+}
+
 export function MaterialsPanel() {
   const { project, update } = useProject();
   const lists = useMaterialLists();
@@ -366,6 +658,7 @@ export function MaterialsPanel() {
           }
           onCommit={(v) => set({ cure_temperature: v }, 'cure')}
         />
+        <CureCycleEditor c={c} resin={resin} set={set} />
         <Field
           label="Strength Weibull shape"
           hint={
@@ -480,6 +773,27 @@ function MaterialEditor() {
   const ultBelowYield = liner && Number(d.ultimate) < Number(d.yield);
   const usage = ed.originalId ? materialUsage(project, ed.kind, ed.originalId) : [];
   const renamed = !!ed.originalId && ed.originalId !== id;
+  const cycle = Array.isArray(d.cycle) ? d.cycle : [];
+
+  const numField = (f: NumSpec) => {
+    const sc = f.scale ?? 1;
+    const v = d[f.key];
+    return (
+      <NumberField
+        key={f.key}
+        label={f.label}
+        unit={f.unit || undefined}
+        value={typeof v === 'number' ? Number((v * sc).toPrecision(10)) : null}
+        gt={f.gt}
+        lt={f.lt}
+        min={f.min}
+        max={f.max}
+        step={f.step}
+        hint={f.hint}
+        onCommit={(x) => setD({ [f.key]: Number((x / sc).toPrecision(10)) })}
+      />
+    );
+  };
 
   const save = () => {
     if (idErr) return;
@@ -566,25 +880,25 @@ function MaterialEditor() {
             onChange={(v) => setD({ kind: v })}
           />
         ) : null}
-        {[...meta.fields, ...(polymer ? POLYMER_LINER_FIELDS : [])].map((f) => {
-          const sc = f.scale ?? 1;
-          const v = d[f.key];
-          return (
-            <NumberField
-              key={f.key}
-              label={f.label}
-              unit={f.unit || undefined}
-              value={typeof v === 'number' ? Number((v * sc).toPrecision(10)) : null}
-              gt={f.gt}
-              lt={f.lt}
-              min={f.min}
-              max={f.max}
-              step={f.step}
-              hint={f.hint}
-              onCommit={(x) => setD({ [f.key]: Number((x / sc).toPrecision(10)) })}
-            />
-          );
-        })}
+        {[...meta.fields, ...(polymer ? POLYMER_LINER_FIELDS : []), ...(liner ? LINER_THERMAL_FIELDS : [])].map(
+          numField,
+        )}
+        {ed.kind === 'resins' ? (
+          <details className="mat-group">
+            <summary>Cure kinetics (DSC)</summary>
+            <p className="muted small">
+              Kamal–Sourour: dα/dt = (k₁ + k₂ α^m)(1 − α)^n, kᵢ = Aᵢ exp(−Eᵢ / RT); Tg(α) by DiBenedetto. Used by the
+              oven cure simulation (exotherm, degree of cure, Tg).
+            </p>
+            {RESIN_KINETICS_FIELDS.map(numField)}
+            <div className="field-label">Recommended cure cycle</div>
+            <CureStepsTable steps={cycle} label="Recommended cycle" onChange={(v) => setD({ cycle: v })} />
+            <p className="muted small">
+              Used when the project has no cure cycle of its own (set points capped at the cure temperature).
+              {cycle.length ? '' : ' Empty: 2 h at 90 °C + 4 h at 130 °C, 2 K/min.'}
+            </p>
+          </details>
+        ) : null}
         {ultBelowYield ? <Banner kind="warn">Ultimate strength is below the yield strength.</Banner> : null}
         <p className="muted small">
           Use qualified, lot-specific values: the analysis takes them as given. Undo (Ctrl+Z) reverts a save.

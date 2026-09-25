@@ -42,7 +42,24 @@
    "translation_efficiency": 0.82,
    "cure_temperature": 120.0,
    "strength_weibull_shape": null,
-   "rupture_exponent": null
+   "rupture_exponent": null,
+   "cure_cycle": [
+    {
+     "ramp": 0.5,
+     "temperature": 80,
+     "hold": 240
+    },
+    {
+     "ramp": 0.5,
+     "temperature": 100,
+     "hold": 120
+    },
+    {
+     "ramp": 1.0,
+     "temperature": 130,
+     "hold": 240
+    }
+   ]
   },
   "materials": {
    "fibers": [],

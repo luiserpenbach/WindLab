@@ -215,6 +215,18 @@ def post_ccx_export(project: S.Project):
     return _design_errors(run)
 
 
+@app.post("/api/suggest-cure", response_model=S.CureSuggestion)
+def post_suggest_cure(project: S.Project):
+    """Shortest cure cycle meeting the exotherm, degree-of-cure, Tg and liner-temperature limits (seconds to ~1 min)."""
+    from .core.cure import suggest_cycle
+
+    def run():
+        steps, res, notes = suggest_cycle(build(project))
+        return S.CureSuggestion(cure_cycle=steps, result=res, notes=notes)
+
+    return _design_errors(run)
+
+
 @app.post("/api/continuous", response_model=S.ContinuousResult)
 def post_continuous(project: S.Project):
     """Continuous-winding plan: transition passes between all layers (uses ``project.continuous`` settings,

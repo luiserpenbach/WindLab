@@ -76,7 +76,10 @@ def _examples_raw() -> list[tuple[str, str, S.Project]]:
                 liner=S.LinerSpec(radius=60, cyl_length=160, wall_thickness=3.0, dome_type="hemispherical",
                                   boss_radius_a=12, boss_radius_b=12, boss_length=25, shaft_radius=8),
                 requirements=S.Requirements(meop=70, burst_factor=2.25, proof_factor=1.5, design_cycles=5000),
-                composite=S.CompositeSpec(fiber="T800S-24K"),
+                # 14 mm thick laminate: slow ramps with a low first dwell keep the cure exotherm small
+                composite=S.CompositeSpec(fiber="T800S-24K", cure_cycle=[
+                    S.CureStep(ramp=0.5, temperature=80, hold=240), S.CureStep(ramp=0.5, temperature=100, hold=120),
+                    S.CureStep(ramp=1.0, temperature=130, hold=240)]),
                 layers=[
                     S.Layer(id="h", type="helical", band_width=8.0, tension=30),
                     S.Layer(id="c", type="hoop", band_width=8.0, tension=40),
@@ -109,7 +112,12 @@ def _examples_raw() -> list[tuple[str, str, S.Project]]:
                 # NWP 35 MPa: MEOP 1.25 NWP, burst 2.25 NWP, proof 1.5 NWP (GTR 13 / EC 79 style)
                 requirements=S.Requirements(meop=43.75, burst_factor=1.8, proof_factor=1.2, design_cycles=11000,
                                             temperature_max=85.0),
-                composite=S.CompositeSpec(fiber="T700S-24K", cure_temperature=80.0),
+                # HDPE liner (85 degC max): low-temperature resin, stepped cure below 80 degC; the cure-limited Tg
+                # (about 99 degC) allows a 10 K margin over the 85 degC service maximum
+                composite=S.CompositeSpec(fiber="T700S-24K", resin="Epoxy-LT", cure_temperature=80.0, tg_margin=10.0,
+                                          cure_cycle=[S.CureStep(ramp=0.5, temperature=50, hold=240),
+                                                      S.CureStep(ramp=0.5, temperature=70, hold=240),
+                                                      S.CureStep(ramp=0.5, temperature=80, hold=480)]),
                 layers=[
                     S.Layer(id="h", type="helical", band_width=10.0, tension=30),
                     S.Layer(id="c", type="hoop", band_width=10.0, tension=40),

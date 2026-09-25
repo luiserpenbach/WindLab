@@ -3,6 +3,7 @@ import type {
   CalibrationResult,
   CcxExportResponse,
   ContinuousResult,
+  CureSuggestion,
   FeaExportResponse,
   OptimiseResult,
   ReportResponse,
@@ -143,6 +144,7 @@ export const api = {
     request<ProgressiveResult>('POST', '/progressive', { project, mesh }, s),
   continuous: (p: Project, s?: AbortSignal) => request<ContinuousResult>('POST', '/continuous', p, s),
   calibrate: (p: Project, s?: AbortSignal) => request<CalibrationResult>('POST', '/calibrate', p, s),
+  suggestCure: (p: Project, s?: AbortSignal) => request<CureSuggestion>('POST', '/suggest-cure', p, s),
   report: (p: Project, s?: AbortSignal, progressive = false) =>
     request<ReportResponse>('POST', `/report${progressive ? '?progressive=true' : ''}`, p, s),
   feaExport: (p: Project, s?: AbortSignal) => request<FeaExportResponse>('POST', '/fea-export', p, s),

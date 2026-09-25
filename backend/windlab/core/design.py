@@ -494,9 +494,11 @@ def _polymer_checks(b: Build, st: S.StructuralResult, extra: dict, lmat) -> list
         out.append(_chk("liner.strain", "Liner strain at proof", strain <= lmat.strain_limit, value=strain,
                         limit=lmat.strain_limit,
                         detail="The polymer liner follows the overwrap; its strain must stay within the allowable"))
-    out.append(_chk("liner.cure", "Cure temperature within liner limit", comp.cure_temperature <= lmat.max_temp,
-                    value=comp.cure_temperature, limit=lmat.max_temp, unit="degC",
-                    detail="Cure the overwrap below the liner's softening limit (or use a low-temperature resin)"))
+    peak = extra.get("liner_peak_cure", comp.cure_temperature)
+    out.append(_chk("liner.cure", "Liner temperature during cure within limit", peak <= lmat.max_temp,
+                    value=peak, limit=lmat.max_temp, unit="degC",
+                    detail="Peak liner temperature during the cure incl. exotherm (cure temperature if not "
+                           "simulated); use a low-temperature resin / cycle"))
     out.append(_chk("liner.service_temp", "Service temperature within liner limit",
                     req.temperature_max <= lmat.max_temp, value=req.temperature_max, limit=lmat.max_temp,
                     unit="degC"))
@@ -576,6 +578,30 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
                                f"ratio {worst.allowed_ratio:.3f}, life to target {worst.life_years:.3g} years"))
     lmat = get_liner(b.project.liner.material, b.project.materials)
     need = req.design_cycles * req.fatigue_scatter_factor
+    cr = extra.get("cure")
+    if cr is not None and cr.sections:
+        comp = b.project.composite
+        worst_T = max(cr.sections, key=lambda x: x.overshoot)
+        worst_a = min(cr.sections, key=lambda x: x.min_cure)
+        worst_tg = min(cr.sections, key=lambda x: x.tg_final)
+        out.append(_chk("cure.exotherm", "Cure exotherm", worst_T.overshoot <= comp.max_exotherm,
+                        value=worst_T.overshoot, limit=comp.max_exotherm, unit="K",
+                        detail=f"Temperature rise from the reaction heat, {worst_T.name} ({worst_T.thickness:.1f} mm): "
+                               "slower ramps or an intermediate dwell below the gel point limit it"))
+        out.append(_chk("cure.degree", "Degree of cure", worst_a.min_cure >= comp.min_cure,
+                        value=worst_a.min_cure, limit=comp.min_cure,
+                        detail=f"Least-cured point: {worst_a.name}, inner laminate lags the oven"))
+        tg_need = req.temperature_max + comp.tg_margin
+        out.append(_chk("cure.tg", "Glass transition vs service temperature", worst_tg.tg_final >= tg_need,
+                        value=worst_tg.tg_final, limit=tg_need, unit="degC",
+                        detail=f"Tg of the least-cured laminate (DiBenedetto) >= max service "
+                               f"{req.temperature_max:g} degC + {comp.tg_margin:g} K"))
+        peak = max(x.peak_liner for x in cr.sections)
+        if not lmat.polymer:
+            out.append(_chk("liner.cure_temp", "Liner temperature during cure", peak <= lmat.max_temp,
+                            value=peak, limit=lmat.max_temp, unit="degC",
+                            detail="Peak liner temperature incl. exotherm (ageing / temper of the liner)"))
+        extra["liner_peak_cure"] = peak
     if lmat.polymer:
         out += _polymer_checks(b, st, extra, lmat)
     else:
@@ -649,7 +675,8 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
     return out
 
 
-def analyze(project: S.Project) -> S.AnalysisResult:
+def analyze(project: S.Project, with_cure: bool = True) -> S.AnalysisResult:
+    """Full analysis; ``with_cure=False`` skips the oven cure simulation (sizing loops)."""
     b = build(project)
     st: Optional[S.StructuralResult] = None
     extra: dict = {}
@@ -668,6 +695,12 @@ def analyze(project: S.Project) -> S.AnalysisResult:
     if st is not None:
         fe = fe_result(b, st)
         extra["fe"] = fe
+    cure_res = None
+    if with_cure and b.layers:
+        from . import cure
+
+        cure_res = cure.analyse(b)
+        extra["cure"] = cure_res
     m = mass(b, st.burst_pressure if st else 0.0)
     return S.AnalysisResult(
         liner_outer=S.Curve(x=b.liner_outer.z.tolist(), y=b.liner_outer.r.tolist()),
@@ -675,6 +708,7 @@ def analyze(project: S.Project) -> S.AnalysisResult:
         layers=layer_results,
         structural=st,
         fe=fe,
+        cure=cure_res,
         mass=m,
         checks=checks(b, st, extra),
     )
@@ -844,7 +878,7 @@ def suggest_layup(project: S.Project, max_iter: int = 60, progressive: bool = Fa
     for it in range(max_iter):
         proj = project.model_copy(update={"layers": layers})
         try:
-            res = analyze(proj)
+            res = analyze(proj, with_cure=False)
         except DesignError as e:
             notes.append(f"Stopped: {e}")
             if best is not None:
@@ -968,7 +1002,7 @@ def _best_stagger(project: S.Project, layers: list[S.Layer], notes: list[str]) -
         for k, i in enumerate(hel):
             cand[i] = cand[i].model_copy(update={"turnaround_offset": round(offs[k], 3)})
         try:
-            res = analyze(project.model_copy(update={"layers": cand}))
+            res = analyze(project.model_copy(update={"layers": cand}), with_cure=False)
         except DesignError:
             continue
         if any(c.status == "fail" and not c.id.startswith("tension.") for c in res.checks):

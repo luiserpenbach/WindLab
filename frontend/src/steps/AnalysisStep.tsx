@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { api, errorMessage, isAbort } from '../api/client';
 import type {
+  Check,
+  CureResult,
+  CureSection as CureSectionResult,
   FailureEventKind,
   FEResult,
   LinerSpec,
@@ -13,9 +16,9 @@ import type {
 } from '../api/types';
 import { Field, NumberField, Section, Segmented, SliderField, Switch } from '../components/fields';
 import { LineChart, type Band, type RefLine, type Series } from '../components/LineChart';
-import { Banner, Button, Empty, Kpi, Meter, Progress, Spinner, StatusPill } from '../components/ui';
+import { Banner, Button, Empty, Kpi, Meter, Progress, Spinner, StatusDot, StatusPill } from '../components/ui';
 import { useAnalysis } from '../state/analysis';
-import { usePolymerLiner } from '../state/materials';
+import { findMat, useMaterialLists, usePolymerLiner } from '../state/materials';
 import { useProject } from '../state/projectStore';
 import { useUi, type FeOverlay } from '../state/uiStore';
 import { layerColors } from '../viewer/colors';
@@ -196,6 +199,7 @@ export function AnalysisPanel() {
       {!st ? <p className="muted small">No structural result (add helical and hoop layers).</p> : null}
       {fe ? <FeViewControls fe={fe} radius={liner.radius} /> : null}
       {st?.rupture ? <RuptureSection r={st.rupture} polymer={polymer} /> : null}
+      {result.cure?.sections.length ? <CurePanel cure={result.cure} checks={result.checks} /> : null}
       {st ? <LoadTable st={st} temps={req} polymer={polymer} /> : null}
       {st ? <PressureTargets /> : null}
       <ProgressiveSection />
@@ -284,6 +288,122 @@ function RuptureSection({ r, polymer }: { r: RuptureResult; polymer: boolean }) 
         {r.calibrated ? ' (calibrated to the ISO 11119 / 11439 stress ratios)' : ' (user override)'}. Pf vs time is
         plotted below the 3D view.
         {polymer ? ` ${NO_AUTOFRETTAGE_NOTE}` : null}
+      </p>
+    </Section>
+  );
+}
+
+// ------------------------------------------------------------------ oven cure
+/** Checks of the cure simulation (set in the Materials step) and the liner temperature during cure. */
+const isCureCheck = (c: Check) => /^cure\./.test(c.id) || c.id === 'liner.cure_temp';
+
+const fmtMin = (min: number) => (min >= 90 ? `${sig(min / 60, 3)} h` : `${sig(min, 3)} min`);
+
+function CurePanel({ cure, checks }: { cure: CureResult; checks: Check[] }) {
+  const { project } = useProject();
+  const lists = useMaterialLists();
+  const comp = project.composite;
+  const req = project.requirements;
+  const linerMax = findMat(lists.liners, project.liner.material)?.rec.max_temp;
+  const chk = (id: string) => checks.find((c) => c.id === id) ?? null;
+  const exo = chk('cure.exotherm');
+  const deg = chk('cure.degree');
+  const tg = chk('cure.tg');
+  const lt = chk('liner.cure_temp') ?? chk('liner.cure');
+  const secs = cure.sections;
+  const worstExo = Math.max(...secs.map((x) => x.overshoot));
+  const worstCure = Math.min(...secs.map((x) => x.min_cure));
+  const worstTg = Math.min(...secs.map((x) => x.tg_final));
+  const peakLiner = Math.max(...secs.map((x) => x.peak_liner));
+  const tgNeed = req.temperature_max + comp.tg_margin;
+  return (
+    <Section title="Cure">
+      <div className="kpi-grid">
+        <Kpi
+          label="Exotherm"
+          value={sig(worstExo, 3)}
+          unit="K"
+          status={exo?.status ?? null}
+          title="Largest laminate temperature rise from the reaction heat (vs the same wall without it)"
+          sub={
+            <>
+              <Meter value={worstExo} limit={comp.max_exotherm} />
+              limit {sig(comp.max_exotherm, 3)} K
+            </>
+          }
+        />
+        <Kpi
+          label="Degree of cure"
+          value={sig(worstCure * 100, 3)}
+          unit="%"
+          status={deg?.status ?? null}
+          title="Lowest final degree of cure in the laminate"
+          sub={
+            <>
+              <Meter value={worstCure} limit={comp.min_cure} invert />
+              required ≥ {sig(comp.min_cure * 100, 3)} %
+            </>
+          }
+        />
+        <Kpi
+          label="Tg (least cured)"
+          value={sig(worstTg, 4)}
+          unit="°C"
+          status={tg?.status ?? null}
+          sub={`required ≥ ${sig(tgNeed, 4)} °C (${sig(req.temperature_max, 3)} + ${sig(comp.tg_margin, 3)} K)`}
+        />
+        <Kpi
+          label="Peak liner temp."
+          value={sig(peakLiner, 4)}
+          unit="°C"
+          status={lt?.status ?? null}
+          sub={linerMax != null ? `liner max. ${sig(linerMax, 4)} °C` : undefined}
+        />
+      </div>
+      <div className="table-scroll">
+        <table className="data-table compact">
+          <caption>Sections · cycle {fmtMin(cure.duration)} incl. cool-down</caption>
+          <thead>
+            <tr>
+              <th>Section</th>
+              <th className="num" title="Composite thickness">
+                t <span className="th-unit">mm</span>
+              </th>
+              <th className="num" title="Exotherm: laminate temperature rise from the reaction heat">
+                <StatusDot status={exo?.status ?? null} /> exo <span className="th-unit">K</span>
+              </th>
+              <th className="num" title="Peak liner temperature">
+                <StatusDot status={lt?.status ?? null} /> liner <span className="th-unit">°C</span>
+              </th>
+              <th className="num" title="Lowest final degree of cure">
+                <StatusDot status={deg?.status ?? null} /> α <span className="th-unit">%</span>
+              </th>
+              <th className="num" title="Tg at the least-cured point (DiBenedetto)">
+                <StatusDot status={tg?.status ?? null} /> Tg <span className="th-unit">°C</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {secs.map((x) => (
+              <tr key={x.name}>
+                <td>{x.name}</td>
+                <td className="num">{sig(x.thickness, 3)}</td>
+                <td className={`num ${x.overshoot > comp.max_exotherm ? 'bad' : ''}`}>{sig(x.overshoot, 3)}</td>
+                <td className={`num ${linerMax != null && x.peak_liner > linerMax ? 'bad' : ''}`}>
+                  {sig(x.peak_liner, 4)}
+                </td>
+                <td className={`num ${x.min_cure < comp.min_cure ? 'bad' : ''}`}>{sig(x.min_cure * 100, 3)}</td>
+                <td className={`num ${x.tg_final < tgNeed ? 'bad' : ''}`}>{sig(x.tg_final, 4)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ChecksList checks={checks.filter(isCureCheck)} title="Cure checks" />
+      <p className="muted small">
+        1D radial heat conduction through liner and laminate with Kamal–Sourour cure kinetics, oven cycle{' '}
+        {comp.cure_cycle.length ? 'from the project' : 'recommended for the resin'} (Materials step). Temperatures and
+        degree of cure vs time are plotted below the 3D view.
       </p>
     </Section>
   );
@@ -566,6 +686,108 @@ export function RuptureChart({ height = 250 }: { height?: number }) {
       xFormat={(x) => `${sig(Math.pow(10, x), 3)} y`}
       height={height}
       emptyText="No stress-rupture result"
+    />
+  );
+}
+
+// ------------------------------------------------------------------ cure charts
+/** Selected cure section (shared by the temperature and degree-of-cure charts). */
+let cureSec = 0;
+const cureSecListeners = new Set<() => void>();
+const cureSecStore = {
+  get: () => cureSec,
+  set(i: number) {
+    cureSec = i;
+    cureSecListeners.forEach((l) => l());
+  },
+  subscribe(l: () => void) {
+    cureSecListeners.add(l);
+    return () => cureSecListeners.delete(l);
+  },
+};
+
+function useCureSection(): { cure: CureResult | null; sec: CureSectionResult | null; tools: ReactNode } {
+  const { result } = useAnalysis();
+  const i = useSyncExternalStore(cureSecStore.subscribe, cureSecStore.get, cureSecStore.get);
+  const cure = result?.cure ?? null;
+  const secs = cure?.sections ?? [];
+  const idx = Math.min(i, Math.max(0, secs.length - 1));
+  const tools =
+    secs.length > 1 ? (
+      <Segmented<number>
+        size="sm"
+        ariaLabel="Cure section"
+        value={idx}
+        options={secs.map((x, j) => ({ value: j, label: x.name.split(' ')[0] }))}
+        onChange={cureSecStore.set}
+      />
+    ) : null;
+  return { cure, sec: secs[idx] ?? null, tools };
+}
+
+export function CureTemperatureChart({ height = 250 }: { height?: number }) {
+  const { sec, tools } = useCureSection();
+  const { project } = useProject();
+  const lists = useMaterialLists();
+  const linerMax = findMat(lists.liners, project.liner.material)?.rec.max_temp;
+  const series = useMemo<Series[]>(() => {
+    if (!sec) return [];
+    const x = sec.times;
+    return [
+      { id: 'oven', name: 'Oven', x, y: sec.oven, color: 'var(--axis)', dash: '5 3' },
+      { id: 'liner', name: 'Liner', x, y: sec.t_liner, color: 'var(--series-1)' },
+      { id: 'inner', name: 'Laminate inner', x, y: sec.t_inner, color: 'var(--series-2)' },
+      { id: 'mid', name: 'Laminate mid', x, y: sec.t_mid, color: 'var(--series-4)' },
+      { id: 'outer', name: 'Laminate outer', x, y: sec.t_outer, color: 'var(--series-3)' },
+    ];
+  }, [sec]);
+  return (
+    <LineChart
+      title={`Cure · temperature${sec ? `, ${sec.name}` : ''}`}
+      series={series}
+      hlines={
+        linerMax != null
+          ? [{ value: linerMax, label: `liner max. ${sig(linerMax, 4)} °C`, color: 'var(--status-critical)' }]
+          : undefined
+      }
+      xLabel="Time"
+      xUnit="min"
+      yLabel="T"
+      yUnit="°C"
+      height={height}
+      emptyText="No cure result"
+      tools={tools}
+    />
+  );
+}
+
+export function CureDegreeChart({ height = 250 }: { height?: number }) {
+  const { sec, tools } = useCureSection();
+  const { project } = useProject();
+  const minCure = project.composite.min_cure;
+  const series = useMemo<Series[]>(() => {
+    if (!sec) return [];
+    const x = sec.times;
+    const pct = (a: number[]) => a.map((v) => v * 100);
+    return [
+      { id: 'inner', name: 'Inner', x, y: pct(sec.a_inner), color: 'var(--series-2)' },
+      { id: 'mid', name: 'Mid', x, y: pct(sec.a_mid), color: 'var(--series-4)' },
+      { id: 'outer', name: 'Outer', x, y: pct(sec.a_outer), color: 'var(--series-3)' },
+    ];
+  }, [sec]);
+  return (
+    <LineChart
+      title={`Cure · degree of cure${sec ? `, ${sec.name}` : ''}`}
+      series={series}
+      hlines={[{ value: minCure * 100, label: `required ${sig(minCure * 100, 3)} %`, color: 'var(--status-critical)' }]}
+      xLabel="Time"
+      xUnit="min"
+      yLabel="α"
+      yUnit="%"
+      yDomain={[0, 100]}
+      height={height}
+      emptyText="No cure result"
+      tools={tools}
     />
   );
 }
@@ -1120,6 +1342,8 @@ export function AnalysisBottom() {
       <DomeStressChart />
       <ThicknessChart height={250} initialMode="total" />
       {result?.structural?.rupture ? <RuptureChart /> : null}
+      {result?.cure?.sections.length ? <CureTemperatureChart /> : null}
+      {result?.cure?.sections.length ? <CureDegreeChart /> : null}
       {prog ? <ProgressiveCurveChart /> : null}
       {prog ? <ProgressiveDamageChart /> : null}
       {prog ? <LinerPeeqChart /> : null}

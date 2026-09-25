@@ -81,6 +81,12 @@ class CustomFiber(BaseModel):
     cte2: float = Field(7.0e-6, description="Transverse CTE [1/K]")
 
 
+class CureStep(BaseModel):
+    ramp: float = Field(2.0, gt=0, description="Heating rate to this step [K/min]")
+    temperature: float = Field(..., description="Oven set point [degC]")
+    hold: float = Field(..., ge=0, description="Hold time [min]")
+
+
 class CustomResin(BaseModel):
     id: str
     name: str
@@ -93,6 +99,17 @@ class CustomResin(BaseModel):
     Yt: float = Field(55.0, gt=0, description="UD ply transverse tensile strength [MPa]")
     Yc: float = Field(200.0, gt=0, description="UD ply transverse compressive strength [MPa]")
     S12: float = Field(75.0, gt=0, description="UD ply in-plane shear strength [MPa]")
+    A1: float = Field(5.0e5, ge=0, description="Kamal-Sourour pre-exponential k1 [1/s]")
+    E1: float = Field(75_000.0, gt=0, description="Activation energy k1 [J/mol]")
+    A2: float = Field(5.0e6, ge=0, description="Kamal-Sourour pre-exponential k2 [1/s]")
+    E2: float = Field(75_000.0, gt=0, description="Activation energy k2 [J/mol]")
+    m: float = Field(0.5, ge=0, description="Autocatalytic exponent")
+    n: float = Field(1.5, gt=0, description="Reaction order")
+    heat: float = Field(350.0, ge=0, description="Heat of reaction [J/g resin]")
+    tg0: float = Field(-20.0, description="Tg uncured [degC]")
+    tg_inf: float = Field(140.0, description="Tg fully cured [degC]")
+    tg_lambda: float = Field(0.45, gt=0, le=1, description="DiBenedetto parameter")
+    cycle: list[CureStep] = Field(default_factory=list, description="Recommended cure cycle")
 
 
 class CustomLiner(BaseModel):
@@ -113,6 +130,8 @@ class CustomLiner(BaseModel):
     strain_limit: float = Field(0.0, ge=0, description="Polymer: allowable liner strain at proof [-]")
     h2_permeability: float = Field(0.0, ge=0, description="H2 permeability at 20 degC [Barrer]")
     perm_activation: float = Field(0.0, ge=0, description="Permeability activation energy [kJ/mol]")
+    conductivity: float = Field(150.0, gt=0, description="Thermal conductivity [W/(m K)]")
+    heat_capacity: float = Field(900.0, gt=0, description="Specific heat [J/(kg K)]")
 
     model_config = {"populate_by_name": True}
 
@@ -135,6 +154,12 @@ class CompositeSpec(BaseModel):
     cure_temperature: float = Field(
         120.0, description="Stress-free temperature of the liner/composite bond (cure) [degC]"
     )
+    cure_cycle: list[CureStep] = Field(
+        default_factory=list, description="Oven cure cycle; empty = the resin's recommended cycle")
+    oven_htc: float = Field(25.0, gt=0, description="Oven heat-transfer coefficient, rotating part [W/(m2 K)]")
+    max_exotherm: float = Field(15.0, gt=0, description="Allowed exotherm: laminate temperature rise from the reaction heat [K]")
+    min_cure: float = Field(0.90, gt=0, le=1, description="Required final degree of cure everywhere")
+    tg_margin: float = Field(15.0, ge=0, description="Required Tg above the maximum service temperature [K]")
     strength_weibull_shape: Optional[float] = Field(
         None, gt=1, description="Weibull shape of the vessel burst strength; null = fibre-family default")
     rupture_exponent: Optional[float] = Field(
@@ -343,6 +368,36 @@ class LoadPoint(BaseModel):
     strain_hoop: float
 
 
+class CureSection(BaseModel):
+    name: str
+    thickness: float  # composite [mm]
+    times: list[float]  # [min]
+    oven: list[float]  # [degC]
+    t_liner: list[float]
+    t_inner: list[float]  # composite next to the liner
+    t_mid: list[float]
+    t_outer: list[float]
+    a_inner: list[float]  # degree of cure
+    a_mid: list[float]
+    a_outer: list[float]
+    overshoot: float  # exotherm: max laminate temperature above the same wall without reaction heat [K]
+    min_cure: float  # lowest final degree of cure
+    tg_final: float  # Tg at the least-cured point [degC]
+    peak_liner: float  # [degC]
+
+
+class CureResult(BaseModel):
+    cycle: list[CureStep]
+    duration: float  # [min]
+    sections: list[CureSection]
+
+
+class CureSuggestion(BaseModel):
+    cure_cycle: list[CureStep]
+    result: CureResult
+    notes: list[str] = []
+
+
 class RuptureGroup(BaseModel):
     group: str  # "hoop" | "helical"
     ratio_meop: float
@@ -440,6 +495,7 @@ class AnalysisResult(BaseModel):
     layers: list[LayerResult]
     structural: Optional[StructuralResult]
     fe: Optional[FEResult] = None
+    cure: Optional[CureResult] = Field(None, description="Oven cure simulation (temperatures, degree of cure)")
     mass: MassResult
     checks: list[Check]
 

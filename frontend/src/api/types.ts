@@ -98,7 +98,41 @@ export interface CustomFiber {
   cte2: number;
 }
 
-export interface CustomResin {
+/** One step of an oven cure cycle: ramp to the set point, then hold. */
+export interface CureStep {
+  /** Heating rate to this step [K/min], > 0 */
+  ramp: number;
+  /** Oven set point [degC] */
+  temperature: number;
+  /** Hold time [min], >= 0 */
+  hold: number;
+}
+
+/** Cure kinetics (Kamal-Sourour: da/dt = (k1 + k2 a^m)(1 - a)^n, k_i = A_i exp(-E_i / R T)) and Tg (DiBenedetto). */
+export interface CureKinetics {
+  /** Pre-exponential k1 [1/s], >= 0 */
+  A1: number;
+  /** Activation energy k1 [J/mol], > 0 */
+  E1: number;
+  /** Pre-exponential k2 [1/s], >= 0 */
+  A2: number;
+  /** Activation energy k2 [J/mol], > 0 */
+  E2: number;
+  /** Autocatalytic exponent, >= 0 */
+  m: number;
+  /** Reaction order, > 0 */
+  n: number;
+  /** Heat of reaction [J/g resin], >= 0 */
+  heat: number;
+  /** Tg uncured [degC] */
+  tg0: number;
+  /** Tg fully cured [degC] */
+  tg_inf: number;
+  /** DiBenedetto parameter, 0 < x <= 1 */
+  tg_lambda: number;
+}
+
+export interface CustomResin extends CureKinetics {
   id: string;
   name: string;
   /** [MPa] */
@@ -108,6 +142,8 @@ export interface CustomResin {
   density: number;
   /** CTE [1/K] */
   cte: number;
+  /** Recommended cure cycle (empty = backend default) */
+  cycle: CureStep[];
 }
 
 export type LinerKind = 'metal' | 'polymer';
@@ -144,6 +180,10 @@ export interface CustomLiner {
   h2_permeability: number;
   /** Permeability activation energy [kJ/mol] */
   perm_activation: number;
+  /** Thermal conductivity [W/(m K)], > 0 */
+  conductivity: number;
+  /** Specific heat [J/(kg K)], > 0 */
+  heat_capacity: number;
 }
 
 /** Project-specific materials; they take precedence over the built-in database. */
@@ -162,6 +202,16 @@ export interface CompositeSpec {
   translation_efficiency: number;
   /** Stress-free temperature of the liner/composite bond (cure) [degC] */
   cure_temperature: number;
+  /** Oven cure cycle; empty = the resin's recommended cycle (set points capped at cure_temperature) */
+  cure_cycle: CureStep[];
+  /** Oven heat-transfer coefficient, rotating part [W/(m2 K)], > 0 */
+  oven_htc: number;
+  /** Allowed exotherm: laminate temperature rise from the reaction heat [K], > 0 */
+  max_exotherm: number;
+  /** Required final degree of cure everywhere, 0 < x <= 1 */
+  min_cure: number;
+  /** Required Tg above the maximum service temperature [K], >= 0 */
+  tg_margin: number;
   /** Weibull shape of the vessel burst strength, > 1; null = fibre-family default */
   strength_weibull_shape: number | null;
   /** Stress-rupture power-law exponent, > 1; null = calibrated to the standards' stress ratios */
@@ -513,6 +563,47 @@ export interface FEResult {
   liner_hotspot_cycles: number;
 }
 
+/** Oven cure simulation at one wall section (1D radial, liner + laminate). */
+export interface CureSection {
+  name: string;
+  /** Composite thickness [mm] */
+  thickness: number;
+  /** [min] */
+  times: number[];
+  /** Oven air temperature [degC] */
+  oven: number[];
+  t_liner: number[];
+  /** Laminate next to the liner [degC] */
+  t_inner: number[];
+  t_mid: number[];
+  t_outer: number[];
+  /** Degree of cure (0..1) */
+  a_inner: number[];
+  a_mid: number[];
+  a_outer: number[];
+  /** Exotherm: max laminate temperature rise from the reaction heat [K] */
+  overshoot: number;
+  /** Lowest final degree of cure */
+  min_cure: number;
+  /** Tg at the least-cured point [degC] */
+  tg_final: number;
+  /** [degC] */
+  peak_liner: number;
+}
+
+export interface CureSuggestion {
+  cure_cycle: CureStep[];
+  result: CureResult;
+  notes: string[];
+}
+
+export interface CureResult {
+  cycle: CureStep[];
+  /** [min] */
+  duration: number;
+  sections: CureSection[];
+}
+
 export interface MassResult {
   liner: number;
   fiber: number;
@@ -531,6 +622,8 @@ export interface AnalysisResult {
   structural: StructuralResult | null;
   /** Shell FE results (optional; absent when not computed) */
   fe?: FEResult | null;
+  /** Oven cure simulation (newer backends) */
+  cure?: CureResult | null;
   mass: MassResult;
   checks: Check[];
 }
@@ -695,6 +788,19 @@ export interface Resin {
   cure?: string;
   /** Typical stress-free (final cure) temperature [degC]; built-in resins only */
   cure_temperature?: number;
+  /** Cure kinetics (absent on older backends) */
+  A1?: number;
+  E1?: number;
+  A2?: number;
+  E2?: number;
+  m?: number;
+  n?: number;
+  heat?: number;
+  tg0?: number;
+  tg_inf?: number;
+  tg_lambda?: number;
+  /** Recommended cure cycle: built-in [ramp K/min, degC, hold min] triples; custom resins CureStep records */
+  cycle?: ([number, number, number] | CureStep)[];
 }
 
 export interface LinerMaterial {
@@ -723,6 +829,10 @@ export interface LinerMaterial {
   h2_permeability: number;
   /** Permeability activation energy [kJ/mol] */
   perm_activation: number;
+  /** Thermal conductivity [W/(m K)] (absent on older backends) */
+  conductivity?: number;
+  /** Specific heat [J/(kg K)] (absent on older backends) */
+  heat_capacity?: number;
 }
 
 export interface MaterialsResponse {

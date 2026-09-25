@@ -2319,6 +2319,37 @@ td.bad {
 .resin-cure {
   margin-top: 4px;
 }
+.cure-cycle {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cure-table td {
+  padding: 2px 3px;
+}
+.cure-table .numin input {
+  padding: 0 5px;
+  height: 24px;
+}
+.cure-table tr:hover .row-actions button,
+.cure-table tr:focus-within .row-actions button {
+  opacity: 1;
+}
+.cure-toolbar {
+  margin: 0;
+}
+.mat-group {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.mat-group > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.mat-group > * + * {
+  margin-top: 5px;
+}
 
 /* ------------------------------------------------------------------ checks linking to layers */
 .check.has-refs {
