@@ -567,6 +567,7 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
                     value=st.stress_ratio_worst, limit=lim,
                     detail=f"MEOP at {req.temperature_min:g} to {req.temperature_max:g} degC incl. cure residual "
                            "stresses"))
+    lmat_polymer = get_liner(b.project.liner.material, b.project.materials).polymer
     if st.rupture is not None:
         ru = st.rupture
         worst = max(ru.groups, key=lambda g: g.pf)
@@ -574,7 +575,8 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
                         ru.pf <= ru.target, value=ru.pf, limit=ru.target,
                         detail=f"{ru.family} Weibull power-law model (shape {ru.weibull_shape:g}, exponent "
                                f"{ru.exponent:.1f}{', calibrated to standard stress ratios' if ru.calibrated else ''}), "
-                               f"credit for surviving autofrettage/proof; worst {worst.group}: allowed MEOP stress "
+                               f"credit for surviving {'the proof test' if lmat_polymer else 'autofrettage/proof'}; "
+                               f"worst {worst.group}: allowed MEOP stress "
                                f"ratio {worst.allowed_ratio:.3f}, life to target {worst.life_years:.3g} years"))
     lmat = get_liner(b.project.liner.material, b.project.materials)
     need = req.design_cycles * req.fatigue_scatter_factor
@@ -640,7 +642,9 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
                         warn=tr.residual_stress[worst] > 0 or lmat.polymer,
                         value=float(tr.loss[worst]), limit=0.6, refs=[b.layers[worst].spec.id],
                         detail=(f"Layer {worst + 1} loses {tr.loss[worst] * 100:.0f}% of its winding prestress as later "
-                                "layers compress it (slack inner layers wrinkle). Use the tension schedule.")
+                                "layers compress it" + (" (over 100 %: it ends up in compression)" if tr.loss[worst] > 1
+                                                        else "") + "; slack inner layers wrinkle. Use the tension "
+                                "schedule.")
                         if tr.loss[worst] > 0.6 else
                         f"Largest loss {tr.loss[worst] * 100:.0f}% (layer {worst + 1}); inner layers keep their prestress."))
     bridging = [(bl, normal_curvature(bl)) for bl in b.layers if bl.gp is not None]

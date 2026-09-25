@@ -1,8 +1,8 @@
 # WindLab
 
-Filament winding design and CAM for **Type III COPVs** (metal liner, carbon
-overwrap), from liner geometry to G-code for **3- and 4-axis** winding machines
-running **LinuxCNC** or **GRBL / grblHAL**, driven from a web UI.
+Filament winding design and CAM for **Type III and Type IV COPVs** (metal or polymer liner, carbon or glass
+overwrap), from liner geometry to G-code for **2-, 3- and 4-axis** winding machines running **LinuxCNC** or
+**GRBL / grblHAL**, driven from a web UI. Full documentation: [user guide and theory manual](docs/README.md).
 
 ```
 Vessel ─► Materials ─► Layup ─► Analysis ─► Machine ─► Simulate ─► Export
@@ -131,21 +131,34 @@ backend/windlab/
   schemas.py            project + result data model (units: mm, MPa, N, deg, s, g)
   core/geometry.py      liner meridians, offsets, turnaround search
   core/materials.py     database, micromechanics, band thickness
-  core/winding.py       geodesic & hoop paths
-  core/patterns.py      pattern closure solver
-  core/structural.py    liner plasticity + CLT vessel model, burst, fatigue
+  core/winding.py       geodesic & hoop paths, layer path assembly
+  core/paths.py         geodesic / non-geodesic helical paths (slippage, shooting)
+  core/patterns.py      pattern closure solver, pattern style
+  core/thickness_map.py band-level thickness simulation
+  core/structural.py    liner plasticity + CLT cylinder model, Puck matrix cracking, burst, fatigue
+  core/failure.py       Puck inter-fibre failure, fibre failure limits
+  core/shellfe.py       axisymmetric laminated shell FE
+  core/progressive.py   nonlinear progressive-failure shell analysis
+  core/rupture.py       stress-rupture reliability
+  core/cure.py          oven cure simulation, cure-cycle suggestion
+  core/sensitivity.py   burst sensitivity (FOSM)
+  core/tension.py       winding-tension prestress and schedule
+  core/calibration.py   test-data correlation
+  core/optimize.py      mass optimiser
   core/design.py        layer build-up, analysis, checks, layup sizing
-  core/kinematics.py    3/4-axis inverse kinematics, time planning, limits
+  core/kinematics.py    2/3/4-axis machine kinematics, time planning, limits
+  core/continuous.py    continuous-winding transitions
   post/gcode.py         LinuxCNC and GRBL post-processors
-  manufacturing.py      traveller
+  post/verify.py        G-code interpreter / verifier
+  ccx_export.py, fea_export.py   CalculiX and Abaqus decks
+  manufacturing.py, report.py    traveller, design report
   api.py, cli.py        FastAPI app and CLI
 frontend/               React + TypeScript + three.js web UI
-docs/API.md             HTTP API
+docs/                   user guide, theory manual, HTTP API, validation
 ```
 
 ## Roadmap (not yet implemented)
 
-- Continuous layer transitions (currently a pause and reposition between layers).
-- Stress-rupture reliability model (S-081B style) and hot/wet allowable knock-downs.
-- Nonlinear (liner plasticity) shell FE and dome burst without scaling; CalculiX export.
-- Type IV / Type V vessels.
+- Fibre bridging in the machine kinematics (currently detected and warned, see docs/VALIDATION.md).
+- Hot/wet allowable knock-downs; delamination in the progressive analysis.
+- Type V (linerless) vessels.

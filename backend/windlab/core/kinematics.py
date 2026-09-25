@@ -323,13 +323,22 @@ def _simulate(b: Build, bl: BuiltLayer, path: PathPoints) -> Motion:
         hi = np.where(pos, mid, hi)
         lo = np.where(pos, lo, mid)
     lam = hi
-    lam = no_slack(P, lam)
+    if m.axes_count == 2:
+        # the eye cannot move off its fixed radius: where the free fibre would shorten faster than fibre is
+        # laid, the roving goes slack and the tensioner has to take it up (report it, keep the eye where it is)
+        slack = float(np.max(no_slack(P, lam) - lam, initial=0.0))
+    else:
+        slack = 0.0
+        lam = no_slack(P, lam)
     Q = P[:, 1:] + lam[:, None] * T[:, 1:]
     x_eye = P[:, 0] + lam * T[:, 0]
     y_eye = np.linalg.norm(Q, axis=1)
     theta = np.unwrap(-np.arctan2(Q[:, 1], Q[:, 0]))
 
     warnings: list[str] = []
+    if slack > 1.0:
+        warnings.append(f"Fixed eye radius (2-axis): up to {slack:.0f} mm of roving goes slack near the turnarounds; "
+                        "the tensioner must take it up (a crossfeed axis avoids this)")
     if np.any(unreachable):
         warnings.append(f"{int(unreachable.sum())} points have near-axial fibre; eye position clipped")
 

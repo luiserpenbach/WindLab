@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "windlab"
 version = "0.1.0"
-description = "Filament winding design and CAM for Type III COPVs"
+description = "Filament winding design and CAM for Type III and Type IV COPVs"
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.26",

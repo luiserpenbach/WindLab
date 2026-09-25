@@ -178,12 +178,11 @@ eye outwards and a warning is raised if that exceeds the limit.
   The fixed radius is computed per segment (per layer) and shown in the simulation; the operator sets it
   mechanically.
 
-  *Observed behaviour of the current implementation:* the no-slack correction (§2.5) is applied after
-  the fixed-radius intersection, so near helical turnarounds the planned eye point can move further out
-  along the ray than the fixed radius (desktop example on the 2-axis preset: fixed radius 62.9 mm, planned
-  eye radius up to 191 mm around the turnarounds). Because a 2-axis program has no crossfeed word, the
-  commanded carriage/mandrel positions there correspond to a point further out on the ray than the
-  physical eye. Review turnarounds of 2-axis programs in the simulation.
+  The no-slack correction (§2.5) is **not** applied in 2-axis mode: it would move the planned eye point
+  outwards along the ray, which a fixed-radius eye cannot follow. Instead the eye stays on its radius and
+  the slack the correction would have removed is reported as a warning, since the tensioner has to take
+  it up. On the desktop example with the 2-axis preset (fixed radius 62.9 mm), the helical layers report
+  up to about 130 mm of slack around the turnarounds; a crossfeed axis avoids this.
 
 Presets (`presets.machine_presets()`):
 
@@ -1355,7 +1354,7 @@ dwell 3.9° | r0 12.5 mm | 0.298 | 12 min`.
 | Free fibre | straight line from the tangent contact; no sag, twist or band narrowing model | warning above 600 mm free length |
 | Bridging | fibre assumed to follow the surface; bridging over concave regions only detected | eye placement is off where the fibre actually bridges (VALIDATION.md) |
 | Envelope | concave hull of part + bosses + shaft + clearance; eye as a point with a width allowance | eye kept further out than necessary over concave regions; no machine collision model |
-| 2-axis mode | fixed eye radius per segment; no-slack may move planned points outwards | review 2-axis turnarounds |
+| 2-axis mode | fixed eye radius per segment; slack at the turnarounds is reported, not avoided | use a crossfeed axis or a tensioner with enough take-up |
 | Eye roll | aligned to the band at the contact, period 180°, interpolated where ill-defined | twist along the free span ignored |
 | Refinement | max 5°/10 mm/10° per segment, ≤ 3 × 16 subdivisions | remaining jumps reported, not removed |
 | Timing | per-axis velocity and approximate acceleration limits, no jerk | controller may run slower than planned |
