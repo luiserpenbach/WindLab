@@ -41,49 +41,40 @@ truth for fields and units). Server-side saves go to `~/.windlab/projects`
 ## What it does
 
 **Design**
-- Liner meridians: geodesic-isotensoid, hemispherical and elliptical domes,
-  separate boss radii per end, boss/shaft geometry for clearance.
-- Material database (T700S, T800S, T1000G, IM7, AS4, E-glass; epoxies;
-  AA6061-T6/T62, AA7075-T73, Ti-6Al-4V, 316L) with Halpin-Tsai micromechanics
-  and a strength translation efficiency.
-- Layer-by-layer build-up: band thickness from tow tex / band width / Vf,
-  hoop drop-offs, helical dome thickness from fibre conservation, band-averaged
-  so it stays finite at the turnaround. **Each layer is wound on the surface left
-  by the previous one.**
-- Geodesic helical paths (Clairaut), turnaround staggering to spread the polar
-  build-up.
-- **Pattern closure solver**: enumerates circuit counts / advances with
-  gcd(n, k) = 1, dwell needed per turnaround, coverage, pattern number
-  (crossover count), leading/lagging. Auto-pick or choose in the UI.
+- Liner meridians: geodesic-isotensoid, hemispherical, elliptical; separate boss radii; liner neck thickening
+  into the bosses. Material database plus a per-project library of qualified materials (fibres, resins,
+  liners incl. CTEs and S-N data).
+- Layer-by-layer build-up: band thickness from tex / band width / Vf; each layer is wound on the surface left
+  by the previous one (thick polar build-ups are cleaned of offset loops). Per-layer fibre override (e.g.
+  glass outer layer), hoop overlap and drop-offs, helical turnaround offsets per end, pattern clocking.
+- **Geodesic and non-geodesic helical paths**: slippage-controlled path ODE (kg/kn) integrated in fibre
+  arclength, shooting for each end's turnaround radius (unequal polar openings), auto cylinder angle that
+  balances slippage on both domes, per-layer friction checks, dwell-slippage info.
+- **Pattern closure solver**: circuits/advance with gcd(n,k)=1, dwell per turnaround, coverage, pattern
+  number, leading/lagging; auto or user-picked.
+- **Band-level thickness simulation**: every band of every circuit laid with its real width and
+  cross-section (rectangular / lenticular / elliptical) onto a surface grid: gaps, overlaps, crossover
+  ridges, polar build-up peaks.
 
-**Structural analysis (Type III)**
-- Elastic-plastic liner (J2, plane stress, linear hardening, return mapping)
-  coupled to the CLT overwrap; exact cylinder equilibrium.
-- Full pressure history: autofrettage → proof → MEOP, residual stresses.
-- **Autofrettage window**: lower bound max(proof, first yield), upper bound
-  from reverse yielding on unload (0.9 σy for the Bauschinger effect) and fibre
-  strain; auto-selection inside the window.
-- Burst by fibre-strain failure; hoop-first check and helical reserve.
-- Stress-rupture ratios at MEOP, liner fatigue (SWT with indicative S-N data)
-  against design cycles × scatter factor.
-- Netting sizing and a dome netting-stress check.
-- **Suggest layup**: netting start point refined by full analysis until burst,
-  failure mode, stress ratio, autofrettage and fatigue checks pass.
+**Analysis**
+- Cylinder: J2 elastic-plastic liner + CLT overwrap with thermal strains; cure cool-down residual stresses;
+  autofrettage window and auto-selection; proof; MEOP at ambient and at the temperature extremes; burst
+  (hoop-first check, helical reserve); stress-rupture ratios; liner fatigue (SWT).
+- **Whole-vessel axisymmetric laminated shell FE** (liner + every layer with local thickness and angle):
+  fibre utilisation along the domes, liner bending hot spots, burst estimate incl. domes, hot-spot fatigue.
+- Netting sizing, dome netting check, **winding tension loss** and uniform-prestress tension schedule,
+  **fibre bridging** detection, predicted **water-jacket volumetric expansion**.
+- **Suggest layup** (sizes to every check), **mass optimiser**, **test-data calibration** (burst /
+  expansion correlation, suggested and B-basis translation efficiency).
 
 **Manufacturing**
-- Kinematics for 3-axis (carriage, crossfeed, mandrel) and 4-axis (+ eye roll)
-  machines: eye on an envelope at a set clearance from the wound part and the
-  bosses/shaft, free fibre along the path tangent, mandrel angle solved per
-  point, eye roll keeps the band flat.
-- Time planning with fibre speed, per-axis velocity and acceleration limits;
-  soft-limit checks; the machine's minimum crossfeed radius is respected.
-- Post-processors: **LinuxCNC** (`.ngc`, G93 inverse time, `M68` tension
-  analog out, `(MSG,…)` + `M0` layer pauses, `G64` blending) and **GRBL /
-  grblHAL** (`.gcode`, G93, tension via spindle PWM, 32-bit-float safe rotary
-  resets per layer or circuit, axis letter validation). Any axis letter,
-  scale (e.g. mandrel mapped to a linear GRBL axis in degrees) and direction.
-- Shop-floor traveller: BOM with allowance, preparation checklist, layer table
-  with sign-off, cure, autofrettage/proof/leak steps, release.
+- Kinematics for 2-axis (fixed eye radius), 3-axis and 4-axis (eye roll) machines, clearance envelope from
+  the wound part, bosses and shaft; free-fibre clearance check; time planning with velocity and
+  acceleration limits; soft limits.
+- Post-processors: **LinuxCNC** (G93, `M68` tension, `(MSG)`/`M0` pauses) and **GRBL / grblHAL** (G93,
+  spindle-PWM tension, float-safe rotary resets, letter validation), any axis mapping / scale / direction.
+- Traveller (BOM, prep, per-layer sign-off, cure, autofrettage/proof with expansion targets), printable
+  **design report**, **Abaqus SAX1 composite export** + per-element layup CSV.
 
 ## Engineering model: know the limits
 
@@ -96,8 +87,11 @@ hardware:
   bending, the boss/liner junction, winding-tension residual stress or
   cure/thermal residual stress. Validate the domes with FEA and verify the
   design by burst testing.
-- Geodesic paths only. With unequal polar openings, both ends use the larger
-  turnaround radius.
+- Non-geodesic paths use a constant slippage coefficient per dome; friction values must be measured for
+  your fibre/resin/surface combination.
+- The shell FE is linear elastic at MEOP; burst including domes is estimated by scaling the cylinder's
+  nonlinear burst. The Abaqus export has not been validated in Abaqus by the authors; check the normals
+  and ply order on first use.
 - Always dry-run new G-code (no fibre, no mandrel) with feed override and
   check the axis directions and offsets.
 
@@ -122,15 +116,7 @@ docs/API.md             HTTP API
 
 ## Roadmap (not yet implemented)
 
-- Non-geodesic winding (friction-limited slippage) for unequal openings and
-  angle control, plus friction calibration.
-- Dome FE export (Abaqus/CalculiX axisymmetric shell with per-element
-  angle/thickness), and an integrated axisymmetric FE solver.
-- Collision checks of the eye body against the part, and axis reversal
-  smoothing at the turnarounds.
-- Layer transitions without stopping (continuous winding between layers).
-- Test-data loop: import burst, strain-gauge and autofrettage data and
-  compare with the predictions to calibrate efficiency factors.
-- Type IV (polymer liner) and Type V support, and a stress-rupture
-  reliability model per ANSI/AIAA S-081B.
-- A layup optimiser (mass vs. margins) and cost/time dashboards.
+- Continuous layer transitions (currently a pause and reposition between layers).
+- Stress-rupture reliability model (S-081B style) and hot/wet allowable knock-downs.
+- Nonlinear (liner plasticity) shell FE and dome burst without scaling; CalculiX export.
+- Type IV / Type V vessels.

@@ -16,6 +16,12 @@ mass in g.
 | POST | `/api/path` | `LayerRequest` | `PathResult` (fibre path on the mandrel, 3D) |
 | POST | `/api/simulate` | `LayerRequest` | `SimulationResult` (machine axes over time) |
 | POST | `/api/gcode` | `GcodeRequest` | `{filename, gcode, lines, total_time, warnings}` |
+| POST | `/api/thickness-map` | `ThicknessMapRequest` | `ThicknessMapResult`: band-level thickness grid (z x phi) + stats |
+| POST | `/api/tension-schedule` | `TensionScheduleRequest` | current vs recommended tensions for uniform prestress |
+| POST | `/api/optimise` | `OptimiseRequest` | `OptimiseResult`: minimum-mass layup with all blocking checks passing |
+| POST | `/api/calibrate` | `Project` (with `tests`) | `CalibrationResult`: measured vs predicted, suggested efficiency |
+| POST | `/api/report` | `Project` | `{html}`: self-contained printable design report |
+| POST | `/api/fea-export` | `Project` | `{filename, inp, csv_filename, csv, elements, materials}` Abaqus SAX1 deck + layup CSV |
 | POST | `/api/traveller` | `Project` | `{markdown, html}` shop-floor work instructions (`html` is an unstyled fragment) |
 | GET | `/api/projects` | – | `[{name, modified}]` saved on the server |
 | GET | `/api/projects/{name}` | – | `Project` |
