@@ -101,6 +101,7 @@ truth for fields and units). Server-side saves go to `~/.windlab/projects`
 - Traveller (BOM, prep, per-layer sign-off, cure, autofrettage/proof with expansion targets), printable
   **design report**, **Abaqus SAX1 composite export** + per-element layup CSV, **CalculiX axisymmetric
   solid export** (open source; `windlab ccx project.json --run DIR` runs it and compares with WindLab).
+- **Documentation**: [user guide and theory manual](docs/README.md).
 - **Validation**: see [docs/VALIDATION.md](docs/VALIDATION.md) (analytic references, independent FE,
   G-code interpretation).
 
