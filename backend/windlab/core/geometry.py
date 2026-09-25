@@ -125,10 +125,25 @@ def liner_profiles(spec: LinerSpec, n_dome: int = 240, n_cyl: int = 60) -> tuple
     z = np.concatenate([(-half - h_a)[::-1], z_cyl, half + h_b])
     r = np.concatenate([r_a[::-1], np.full_like(z_cyl, spec.radius), r_b])
     outer = Profile(z, r)
-    inner = outer.offset(-np.full_like(z, spec.wall_thickness))
+    inner = outer.offset(-liner_thickness(spec, outer))
     if np.any(inner.r <= 0):
         raise GeometryError("Liner wall thicker than the boss radius allows")
     return outer, inner
+
+
+def liner_thickness(spec: LinerSpec, outer: Profile) -> np.ndarray:
+    """Wall thickness along the meridian: constant, thickening smoothly into the boss necks."""
+    t = np.full_like(outer.z, spec.wall_thickness)
+    t_neck = spec.neck_thickness or 3.0 * spec.wall_thickness
+    for sign, rb in ((-1.0, spec.boss_radius_a), (1.0, spec.boss_radius_b)):
+        r_blend = spec.neck_blend_radius or min(max(1.8 * rb, rb + 15.0), 0.6 * spec.radius)
+        if r_blend <= rb:
+            continue
+        side = np.sign(outer.z) == sign
+        x = np.clip((r_blend - outer.r) / (r_blend - rb), 0.0, 1.0)
+        blend = x * x * (3 - 2 * x)  # smoothstep
+        t = np.where(side, spec.wall_thickness + (t_neck - spec.wall_thickness) * blend, t)
+    return t
 
 
 def turnaround_s(profile: Profile, r0: float, end: str) -> float:

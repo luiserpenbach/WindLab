@@ -79,13 +79,13 @@ def _examples_raw() -> list[tuple[str, str, S.Project]]:
             ),
         ),
         (
-            "type3-35mpa-unequal",
-            "Type III, 35 MPa, 6 L, unequal openings, non-geodesic helicals (LinuxCNC 4-axis)",
+            "type3-25mpa-unequal",
+            "Type III, 25 MPa, 6 L, unequal openings, non-geodesic helicals (LinuxCNC 4-axis)",
             S.Project(
-                name="Type III 35 MPa unequal openings",
-                liner=S.LinerSpec(radius=80, cyl_length=260, wall_thickness=2.2, dome_type="isotensoid",
-                                  boss_radius_a=12, boss_radius_b=22, boss_length=25, shaft_radius=8),
-                requirements=S.Requirements(meop=35),
+                name="Type III 25 MPa unequal openings",
+                liner=S.LinerSpec(radius=80, cyl_length=260, wall_thickness=3.0, dome_type="isotensoid",
+                                  boss_radius_a=14, boss_radius_b=24, boss_length=25, shaft_radius=8),
+                requirements=S.Requirements(meop=25),
                 layers=[
                     S.Layer(id="h", type="helical", winding="non-geodesic", band_width=6.0, tension=25,
                             friction=0.2),

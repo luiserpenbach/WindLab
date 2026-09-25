@@ -31,6 +31,12 @@ class LinerSpec(BaseModel):
     boss_radius_b: float = Field(20.0, gt=0, description="Polar boss outer radius, end B (z>0) [mm]")
     boss_length: float = Field(30.0, ge=0, description="Boss/neck protrusion beyond the dome [mm]")
     shaft_radius: float = Field(12.0, gt=0, description="Winding shaft radius beyond the bosses [mm]")
+    neck_thickness: Optional[float] = Field(
+        None, gt=0, description="Liner wall thickness at the boss [mm]; null = 3 x wall thickness"
+    )
+    neck_blend_radius: Optional[float] = Field(
+        None, gt=0, description="Radius where the wall starts thickening towards the boss [mm]; null = auto"
+    )
 
 
 class Requirements(BaseModel):
@@ -233,6 +239,29 @@ class StructuralResult(BaseModel):
     dome_fiber_stress: Curve = Field(..., description="Netting fibre stress at MEOP along z")
 
 
+class FEResult(BaseModel):
+    """Axisymmetric shell FE of the whole vessel at MEOP (linear elastic operating cycle)."""
+
+    z: list[float] = Field(..., description="Element mid axial position [mm]")
+    r: list[float]
+    liner_vm_inner: list[float] = Field(..., description="Liner von Mises at the inner surface, MEOP [MPa]")
+    liner_vm_outer: list[float]
+    fiber_ratio: list[list[Optional[float]]] = Field(
+        ..., description="Per layer: fibre strain / allowable at MEOP along z (null where the layer is absent)"
+    )
+    fiber_ratio_max: list[float]
+    node_z: list[float]
+    node_r: list[float]
+    radial_displacement: list[float] = Field(..., description="Nodal radial displacement at MEOP [mm]")
+    axial_displacement: list[float]
+    dome_burst: float = Field(..., description="Burst estimate including the domes [MPa]")
+    critical_z: float
+    critical_layer: Optional[str]
+    liner_hotspot_factor: float = Field(..., description="Peak liner stress range / cylinder value")
+    liner_hotspot_z: float
+    liner_hotspot_cycles: float
+
+
 class MassResult(BaseModel):
     liner: float
     fiber: float
@@ -247,6 +276,7 @@ class AnalysisResult(BaseModel):
     liner_inner: Curve
     layers: list[LayerResult]
     structural: Optional[StructuralResult]
+    fe: Optional[FEResult] = None
     mass: MassResult
     checks: list[Check]
 

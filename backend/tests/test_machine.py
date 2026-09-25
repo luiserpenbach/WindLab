@@ -9,9 +9,14 @@ from windlab.core.kinematics import eye_envelope, simulate_layer
 from windlab.post.gcode import generate
 
 
-@pytest.mark.parametrize("which", [0, 2])  # a hoop and a helical layer
-def test_eye_lies_on_free_fibre_ray(sized_project, which):
+def _first(b, kind):
+    return next(i for i, bl in enumerate(b.layers) if bl.spec.type == kind)
+
+
+@pytest.mark.parametrize("kind", ["hoop", "helical"])
+def test_eye_lies_on_free_fibre_ray(sized_project, kind):
     b = build(sized_project)
+    which = _first(b, kind)
     mo = simulate_layer(b, b.layers[which])
     P = mo.contact
     T = np.gradient(P, axis=0)
@@ -32,8 +37,8 @@ def test_eye_lies_on_free_fibre_ray(sized_project, which):
 
 def test_hoop_eye_roll_is_small_and_helical_turns(sized_project):
     b = build(sized_project)
-    hoop = simulate_layer(b, b.layers[0])
-    hel = simulate_layer(b, b.layers[2])
+    hoop = simulate_layer(b, b.layers[_first(b, "hoop")])
+    hel = simulate_layer(b, b.layers[_first(b, "helical")])
     assert np.abs(hoop.b).max() < 2.0
     assert np.abs(hel.b).max() > 45.0
 
@@ -42,7 +47,8 @@ def test_hoop_eye_roll_is_small_and_helical_turns(sized_project):
 def test_gcode_is_well_formed(sized_project, preset):
     m = next(p["machine"] for p in presets.machine_presets() if p["id"] == preset)
     prj = sized_project.model_copy(update={"machine": m})
-    prog = generate(prj, [prj.layers[0].id, prj.layers[2].id])
+    hel = next(L.id for L in prj.layers if L.type == "helical")
+    prog = generate(prj, [prj.layers[0].id, hel])
     mode = "G94"
     letters = {m.carriage.letter, m.crossfeed.letter, m.mandrel.letter} | ({m.eye.letter} if m.axes_count == 4 else set())
     n_moves = 0
@@ -70,6 +76,6 @@ def test_gcode_is_well_formed(sized_project, preset):
 def test_rotary_reset_bounds_mandrel_values(sized_project):
     m = next(p["machine"] for p in presets.machine_presets() if p["id"] == "grbl-3axis")
     prj = sized_project.model_copy(update={"machine": m})
-    prog = generate(prj, [prj.layers[2].id])
+    prog = generate(prj, [next(L.id for L in prj.layers if L.type == "helical")])
     ys = [float(v) for v in re.findall(r"^G1.*?Y(-?[0-9.]+)", prog.text, flags=re.M)]
     assert max(ys) < 3 * 360

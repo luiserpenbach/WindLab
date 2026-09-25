@@ -388,6 +388,18 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
     out.append(_chk("fatigue", "Liner fatigue life", st.liner_fatigue_cycles >= need,
                     value=st.liner_fatigue_cycles, limit=need, unit="cycles",
                     detail="SWT estimate with indicative S-N data; confirm by test."))
+    fe = extra.get("fe")
+    if fe is not None:
+        half = b.project.liner.cyl_length / 2
+        where = "cylinder" if abs(fe.critical_z) < half else ("dome B" if fe.critical_z > 0 else "dome A")
+        out.append(_chk("fe.burst", "Burst incl. domes (FE)", fe.dome_burst >= st.required_burst,
+                        value=fe.dome_burst, limit=st.required_burst, unit="MPa",
+                        detail=f"Critical: layer {fe.critical_layer} in the {where} (z = {fe.critical_z:.0f} mm). "
+                               "Cylinder burst scaled by the FE fibre strain distribution."))
+        out.append(_chk("fe.liner", "Liner fatigue hot spot (FE)", fe.liner_hotspot_cycles >= need,
+                        value=fe.liner_hotspot_cycles, limit=need, unit="cycles",
+                        detail=f"Liner stress range {fe.liner_hotspot_factor:.2f}x the cylinder value at "
+                               f"z = {fe.liner_hotspot_z:.0f} mm (bending at dome/boss transitions)."))
     cyl, dome = extra["cyl_helical_stress"], extra["dome_helical_stress"]
     if np.isfinite(cyl) and np.isfinite(dome) and cyl > 0:
         ratio = dome / cyl
@@ -403,14 +415,39 @@ def analyze(project: S.Project) -> S.AnalysisResult:
     if b.layers:
         st, extra = structural(b)
     layer_results = [layer_result(b, bl) for bl in b.layers]
+    fe = None
+    if st is not None:
+        fe = fe_result(b, st)
+        extra["fe"] = fe
     m = mass(b, st.burst_pressure if st else 0.0)
     return S.AnalysisResult(
         liner_outer=S.Curve(x=b.liner_outer.z.tolist(), y=b.liner_outer.r.tolist()),
         liner_inner=S.Curve(x=b.liner_inner.z.tolist(), y=b.liner_inner.r.tolist()),
         layers=layer_results,
         structural=st,
+        fe=fe,
         mass=m,
         checks=checks(b, st, extra),
+    )
+
+
+def fe_result(b: Build, st: S.StructuralResult) -> S.FEResult:
+    from . import shellfe
+
+    ev = shellfe.evaluate(b, b.project.requirements.meop, st.burst_pressure, st.liner_fatigue_cycles)
+    sol = ev.sol
+    rnd = lambda a: np.round(np.asarray(a, dtype=float), 5).tolist()  # noqa: E731
+    ratio = [[None if not np.isfinite(v) else round(float(v), 5) for v in row] for row in ev.fiber_ratio]
+    fr = np.where(np.isnan(ev.fiber_ratio), -np.inf, ev.fiber_ratio)
+    peak = np.maximum(fr.max(axis=0), 0.0) if len(b.layers) else np.zeros(len(sol.z))
+    return S.FEResult(
+        z=rnd(sol.z), r=rnd(sol.r), liner_vm_inner=rnd(ev.liner_vm_inner), liner_vm_outer=rnd(ev.liner_vm_outer),
+        fiber_ratio=ratio, fiber_ratio_max=rnd(peak), node_z=rnd(sol.node_z), node_r=rnd(sol.node_r),
+        radial_displacement=rnd(sol.Ur), axial_displacement=rnd(sol.Uz),
+        dome_burst=ev.dome_burst, critical_z=ev.critical_z,
+        critical_layer=b.layers[ev.critical_layer].spec.id if ev.critical_layer >= 0 else None,
+        liner_hotspot_factor=ev.hotspot_factor, liner_hotspot_z=ev.hotspot_z,
+        liner_hotspot_cycles=ev.hotspot_cycles,
     )
 
 
@@ -459,7 +496,7 @@ def layer_result(b: Build, bl: BuiltLayer) -> S.LayerResult:
 
 
 # --------------------------------------------------------------------------- sizing
-def suggest_layup(project: S.Project, max_iter: int = 40) -> tuple[list[S.Layer], list[str]]:
+def suggest_layup(project: S.Project, max_iter: int = 60) -> tuple[list[S.Layer], list[str]]:
     """Netting-based initial layup refined until burst, mode and stress-ratio checks pass."""
     notes: list[str] = []
     tmpl_hel = next((L for L in project.layers if L.type == "helical"), None)
@@ -493,7 +530,7 @@ def suggest_layup(project: S.Project, max_iter: int = 40) -> tuple[list[S.Layer]
             j = order.index("hoop")
             order[0], order[j] = order[j], order[0]
         ih = ic = 0
-        stagger = [0.0, 0.5, 1.0, 1.5]
+        stagger = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
         for kind in order:
             if kind == "hel":
                 seq.append(hel_t.model_copy(update={
@@ -510,13 +547,18 @@ def suggest_layup(project: S.Project, max_iter: int = 40) -> tuple[list[S.Layer]
         return seq
 
     layers = make(n_hel, n_hoop)
+    best: list[S.Layer] | None = None
     for it in range(max_iter):
         proj = project.model_copy(update={"layers": layers})
         try:
             res = analyze(proj)
         except DesignError as e:
             notes.append(f"Stopped: {e}")
+            if best is not None:
+                notes.append("Returning the last feasible layup; review the failing checks")
+                layers = best
             break
+        best = layers
         st = res.structural
         assert st is not None
         fails = {c.id for c in res.checks if c.status == "fail"}
@@ -525,6 +567,18 @@ def suggest_layup(project: S.Project, max_iter: int = 40) -> tuple[list[S.Layer]
             n_hel += 1
         elif "burst" in fails or "sr.hoop" in fails:
             n_hoop += 1
+        elif "fe.burst" in fails and res.fe is not None:
+            crit = next((L for L in layers if L.id == res.fe.critical_layer), None)
+            if crit is not None and crit.type == "helical":
+                n_hel += 1
+            else:
+                n_hoop += 1
+        elif "fe.liner" in fails and res.fe is not None:
+            # liner bending hot spot on the dome: reinforce the domes (helicals), cylinder: hoops
+            if abs(res.fe.liner_hotspot_z) > project.liner.cyl_length / 2:
+                n_hel += 1
+            else:
+                n_hoop += 1
         elif fails & {"af.window", "af.reverse", "fatigue", "liner.meop"}:
             # liner too dominant: stiffen the overwrap in proportion to the netting split
             n_hoop += 1
