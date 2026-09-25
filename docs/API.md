@@ -20,6 +20,7 @@ mass in g.
 | POST | `/api/tension-schedule` | `TensionScheduleRequest` | current vs recommended tensions for uniform prestress |
 | POST | `/api/optimise` | `OptimiseRequest` | `OptimiseResult`: minimum-mass layup with all blocking checks passing |
 | POST | `/api/calibrate` | `Project` (with `tests`) | `CalibrationResult`: measured vs predicted, suggested efficiency |
+| POST | `/api/continuous` | `Project` | `ContinuousResult`: transition between every pair of layers (kind, passes and their angles, slippage vs limit, fibre length/mass, phase dwell, 3D points); G-code winds these when `project.continuous.enabled` |
 | POST | `/api/progressive` | `{project, mesh}` | `ProgressiveResultOut`: progressive-failure burst, first IFF / FF / liner-yield pressures, events, pressure-strain curve, damage along z (10 s to minutes) |
 | POST | `/api/report` | `Project` | `{html}`: self-contained printable design report |
 | POST | `/api/ccx-export` | `Project` | `{filename, inp, elements, nodes, materials, steps}` CalculiX axisymmetric solid deck (CLI `windlab ccx --run` also compares with WindLab) |

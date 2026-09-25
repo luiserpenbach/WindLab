@@ -277,12 +277,17 @@ def structural(b: Build, damage: bool = True) -> tuple[S.StructuralResult, dict]
     cure = v.cool(req.temperature_ref - T_cure)
     v.reset_damage()
     pb_est, _, _ = burst(v, v.initial(), p_req)
-    p_lo, p_hi = autofrettage_window(v, proof, pb_est)
     auto = req.autofrettage_pressure is None
-    if auto:
-        p_af = p_lo + 0.75 * (p_hi - p_lo) if p_hi > p_lo else p_lo
+    if v.liner.mat.polymer:
+        # Type IV: no autofrettage (the polymer liner carries almost no load); the first load is the proof test
+        p_lo = p_hi = proof
+        p_af = proof if auto else float(req.autofrettage_pressure)
     else:
-        p_af = float(req.autofrettage_pressure)
+        p_lo, p_hi = autofrettage_window(v, proof, pb_est)
+        if auto:
+            p_af = p_lo + 0.75 * (p_hi - p_lo) if p_hi > p_lo else p_lo
+        else:
+            p_af = float(req.autofrettage_pressure)
 
     hist = run_history(v, p_af, proof, req.meop)
     pts = [_load_point(v, h.phase, h.state) for h in hist]
@@ -360,6 +365,7 @@ def structural(b: Build, damage: bool = True) -> tuple[S.StructuralResult, dict]
         netting_hoop_thickness=t_hoop,
         netting_helical_thickness=t_hel,
         dome_fiber_stress=S.Curve(x=dz.tolist(), y=ds.tolist()),
+        rupture=_rupture(b, v, hist[i_af_peak].state, hist[i_proof].state, meop_state),
     )
     extra = {
         "helical_ratio_at_burst": v.fiber_ratio(_burst_state(v, hist[-1].state, pb).eps).get("helical", 0.0),
@@ -373,6 +379,38 @@ def structural(b: Build, damage: bool = True) -> tuple[S.StructuralResult, dict]
         "dome_helical_stress": _dome_max(b, dz, ds),
     }
     return res, extra
+
+
+def _rupture(b: Build, v: Vessel, af, proof, meop) -> S.RuptureResult:
+    """Stress-rupture reliability of each ply group (see core/rupture.py)."""
+    from . import rupture as R
+
+    req, comp = b.project.requirements, b.project.composite
+    fam = R.family_of(b.fiber.id, b.fiber.name)
+    prm = R.params(fam, comp.strength_weibull_shape, comp.rupture_exponent)
+    hold = req.hold_time / 60.0
+    minutes = req.service_life * req.time_at_meop * R.MIN_PER_YEAR
+    r_af, r_pr, r_m = (v.fiber_ratio(st.eps) for st in (af, proof, meop))
+    groups, curves = [], []
+    years = np.geomspace(0.01, max(req.service_life * 10.0, 1.0), 40)
+    for g in sorted(r_m):
+        screen = R.damage(prm, [(r_af[g], hold), (r_pr[g], hold)]) if hold > 0 else 0.0
+        svc = R.damage(prm, [(r_m[g], minutes)])
+        groups.append(S.RuptureGroup(
+            group=g, ratio_meop=r_m[g], ratio_autofrettage=r_af[g], ratio_proof=r_pr[g],
+            pf=R.pf(prm, svc, screen), pf_no_proof_credit=R.pf(prm, svc),
+            life_years=min(R.life_years(prm, r_m[g], req.rupture_pf_target, screen, req.time_at_meop), 1e12),
+            allowed_ratio=R.allowed_ratio(prm, req.service_life, req.rupture_pf_target, screen, req.time_at_meop),
+        ))
+        curves.append([R.pf(prm, R.damage(prm, [(r_m[g], y * req.time_at_meop * R.MIN_PER_YEAR)]), screen)
+                       for y in years])
+    # weakest link: the vessel survives if every group survives
+    total = -math.expm1(sum(math.log1p(-min(gr.pf, 1 - 1e-16)) for gr in groups))
+    curve = [-math.expm1(sum(math.log1p(-min(c[i], 1 - 1e-16)) for c in curves)) for i in range(len(years))]
+    return S.RuptureResult(family=fam, weibull_shape=prm.beta, exponent=prm.n, alpha=prm.alpha,
+                           calibrated=prm.calibrated, groups=groups, pf=total, reliability=1.0 - total,
+                           target=req.rupture_pf_target, service_life=req.service_life,
+                           curve_years=years.tolist(), curve_pf=curve)
 
 
 def _burst_state(v: Vessel, st, p: float):
@@ -411,6 +449,73 @@ def _chk(id_, label, ok, warn=False, value=None, limit=None, unit="", detail="",
     status = "ok" if ok else ("warn" if warn else "fail")
     return S.Check(id=id_, label=label, status=status, value=value, limit=limit, unit=unit, detail=detail,
                    refs=refs or [])
+
+
+R_GAS = 8.314  # J/(mol K)
+BARRER = 3.348e-16  # mol m / (m2 s Pa)
+MOLAR_VOLUME = 22414.0  # NmL/mol
+SUPPORT_SAFETY = 2.0  # on the liner buckling pressure during winding
+
+
+def permeation_rate(b: Build, lmat) -> float:
+    """Steady-state H2 permeation through a polymer liner at MEOP [NmL/h per litre of water capacity]."""
+    req, lin = b.project.requirements, b.project.liner
+    T = req.permeation_temperature + 273.15
+    P = lmat.h2_permeability * BARRER * math.exp(-lmat.perm_activation * 1e3 / R_GAS * (1 / T - 1 / 293.15))
+    prof = b.liner_inner
+    dz, dr = np.diff(prof.z), np.diff(prof.r)
+    area = float(np.sum(2 * math.pi * 0.5 * (prof.r[1:] + prof.r[:-1]) * np.hypot(dz, dr))) * 1e-6  # m2
+    mol_s = P * area * req.meop * 1e6 / (lin.wall_thickness * 1e-3)
+    litres = prof.volume() / 1e6
+    return mol_s * MOLAR_VOLUME * 3600.0 / max(litres, 1e-9)
+
+
+def support_pressure(b: Build, extra: dict, lmat) -> tuple[float, float]:
+    """(external pressure the winding tension puts on the liner, liner buckling pressure) [MPa].
+
+    A long thin tube buckles at p_cr = E / (4 (1 - nu^2)) (t / R)^3 (Bresse); a polymer liner has to be
+    pressurised internally while it is wound so it never carries more than p_cr / SUPPORT_SAFETY.
+    """
+    lin = b.project.liner
+    tr = extra.get("tension")
+    R = lin.radius - lin.wall_thickness / 2
+    p_ext = max(-(tr.liner_hoop if tr is not None else 0.0) * lin.wall_thickness / R, 0.0)
+    p_cr = lmat.E / (4 * (1 - lmat.nu**2)) * (lin.wall_thickness / R) ** 3
+    return p_ext, p_cr
+
+
+def _polymer_checks(b: Build, st: S.StructuralResult, extra: dict, lmat) -> list[S.Check]:
+    """Type IV liner checks (the metal-liner checks do not apply)."""
+    req, comp = b.project.requirements, b.project.composite
+    out = []
+    pr = st.at_proof
+    strain = max(abs(pr.strain_hoop), abs(pr.strain_axial))
+    if lmat.strain_limit > 0:
+        out.append(_chk("liner.strain", "Liner strain at proof", strain <= lmat.strain_limit, value=strain,
+                        limit=lmat.strain_limit,
+                        detail="The polymer liner follows the overwrap; its strain must stay within the allowable"))
+    out.append(_chk("liner.cure", "Cure temperature within liner limit", comp.cure_temperature <= lmat.max_temp,
+                    value=comp.cure_temperature, limit=lmat.max_temp, unit="degC",
+                    detail="Cure the overwrap below the liner's softening limit (or use a low-temperature resin)"))
+    out.append(_chk("liner.service_temp", "Service temperature within liner limit",
+                    req.temperature_max <= lmat.max_temp, value=req.temperature_max, limit=lmat.max_temp,
+                    unit="degC"))
+    if lmat.h2_permeability > 0:
+        q = permeation_rate(b, lmat)
+        out.append(_chk("liner.permeation", "H2 permeation", q <= req.permeation_limit, value=q,
+                        limit=req.permeation_limit, unit="NmL/h/L",
+                        detail=f"At MEOP and {req.permeation_temperature:g} degC through the "
+                               f"{b.project.liner.wall_thickness:g} mm liner (steady state; liner only, "
+                               "the overwrap adds little resistance). Thicker liner or PA6 reduce it."))
+    p_ext, p_cr = support_pressure(b, extra, lmat)
+    need = max(p_ext - p_cr / SUPPORT_SAFETY, 0.0)
+    out.append(S.Check(id="liner.support", label="Internal support pressure while winding",
+                       status="warn" if need > 0 else "ok", value=need, unit="MPa",
+                       detail=f"Winding tension presses {p_ext:.2f} MPa on the liner, which buckles at "
+                              f"{p_cr:.3f} MPa: pressurise it to at least {need * 10:.1f} bar while winding"
+                              if need > 0 else f"Winding pressure {p_ext:.3f} MPa below half the liner buckling "
+                                               f"pressure {p_cr:.3f} MPa"))
+    return out
 
 
 def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Check]:
@@ -460,40 +565,53 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
                     value=st.stress_ratio_worst, limit=lim,
                     detail=f"MEOP at {req.temperature_min:g} to {req.temperature_max:g} degC incl. cure residual "
                            "stresses"))
-    out.append(_chk("liner.temp", "Liner elastic over temperature range", extra["liner_temp_plastic"] <= 1e-7,
-                    value=extra["liner_temp_ratio"], limit=1.0,
-                    detail="Liner von Mises / yield at 0 and MEOP, at the minimum and maximum temperature"))
-    # leak-before-burst: a through-wall liner crack of length 2t must be stable at MEOP (all temperatures)
+    if st.rupture is not None:
+        ru = st.rupture
+        worst = max(ru.groups, key=lambda g: g.pf)
+        out.append(_chk("sr.reliability", f"Stress-rupture probability over {ru.service_life:g} years",
+                        ru.pf <= ru.target, value=ru.pf, limit=ru.target,
+                        detail=f"{ru.family} Weibull power-law model (shape {ru.weibull_shape:g}, exponent "
+                               f"{ru.exponent:.1f}{', calibrated to standard stress ratios' if ru.calibrated else ''}), "
+                               f"credit for surviving autofrettage/proof; worst {worst.group}: allowed MEOP stress "
+                               f"ratio {worst.allowed_ratio:.3f}, life to target {worst.life_years:.3g} years"))
     lmat = get_liner(b.project.liner.material, b.project.materials)
-    sig = max(st.at_meop.liner_hoop, (st.meop_cold.liner_hoop if st.meop_cold else 0.0),
-              (st.meop_hot.liner_hoop if st.meop_hot else 0.0), 0.0)
-    K = sig * math.sqrt(math.pi * b.project.liner.wall_thickness * 1e-3)
-    out.append(_chk("liner.lbb", "Leak-before-burst (liner)", K <= lmat.k_ic, value=K / lmat.k_ic, limit=1.0,
-                    detail=f"Through crack 2t = {2 * b.project.liner.wall_thickness:g} mm at MEOP hoop stress "
-                           f"{sig:.0f} MPa: K = {K:.1f} vs K_Ic {lmat.k_ic:g} MPa*sqrt(m) (overwrap restraint "
-                           "ignored: conservative)"))
-    p_lo, p_hi = st.autofrettage_window
-    out.append(_chk("af.window", "Autofrettage window", p_hi >= p_lo, value=st.autofrettage_pressure,
-                    unit="MPa", detail=f"Feasible range {p_lo:.1f} - {p_hi:.1f} MPa"))
-    out.append(_chk("af.reverse", "No reverse yield after autofrettage",
-                    extra["reverse_yield_ratio"] <= REVERSE_YIELD_LIMIT + 1e-6,
-                    value=extra["reverse_yield_ratio"], limit=REVERSE_YIELD_LIMIT,
-                    detail="Residual liner von Mises / yield (0.9 allows for the Bauschinger effect)"))
-    out.append(_chk("af.fiber", "Fibre strain during autofrettage", extra["af_fiber_ratio"] <= AF_FIBER_RATIO_LIMIT,
-                    warn=extra["af_fiber_ratio"] < 1.0, value=extra["af_fiber_ratio"], limit=AF_FIBER_RATIO_LIMIT,
-                    detail="Fibres would fail during autofrettage" if extra["af_fiber_ratio"] >= 1.0 else ""))
-    out.append(_chk("liner.meop", "Liner elastic at MEOP", extra["meop_yield_ratio"] <= 1.0 + 1e-6,
-                    value=extra["meop_yield_ratio"], limit=1.0))
-    out.append(_chk("liner.proof", "Liner elastic at proof", extra["proof_plastic"] <= 1e-6, warn=True,
-                    detail="Proof below the autofrettage pressure keeps the liner elastic."))
     need = req.design_cycles * req.fatigue_scatter_factor
-    out.append(_chk("fatigue", "Liner fatigue life", st.liner_fatigue_cycles >= need,
-                    value=st.liner_fatigue_cycles, limit=need, unit="cycles",
-                    detail="SWT estimate with indicative S-N data; confirm by test."))
+    if lmat.polymer:
+        out += _polymer_checks(b, st, extra, lmat)
+    else:
+        out.append(_chk("liner.temp", "Liner elastic over temperature range", extra["liner_temp_plastic"] <= 1e-7,
+                        value=extra["liner_temp_ratio"], limit=1.0,
+                        detail="Liner von Mises / yield at 0 and MEOP, at the minimum and maximum temperature"))
+        # leak-before-burst: a through-wall liner crack of length 2t must be stable at MEOP (all temperatures)
+        sig = max(st.at_meop.liner_hoop, (st.meop_cold.liner_hoop if st.meop_cold else 0.0),
+                  (st.meop_hot.liner_hoop if st.meop_hot else 0.0), 0.0)
+        K = sig * math.sqrt(math.pi * b.project.liner.wall_thickness * 1e-3)
+        out.append(_chk("liner.lbb", "Leak-before-burst (liner)", K <= lmat.k_ic, value=K / lmat.k_ic, limit=1.0,
+                        detail=f"Through crack 2t = {2 * b.project.liner.wall_thickness:g} mm at MEOP hoop stress "
+                               f"{sig:.0f} MPa: K = {K:.1f} vs K_Ic {lmat.k_ic:g} MPa*sqrt(m) (overwrap restraint "
+                               "ignored: conservative)"))
+        p_lo, p_hi = st.autofrettage_window
+        out.append(_chk("af.window", "Autofrettage window", p_hi >= p_lo, value=st.autofrettage_pressure,
+                        unit="MPa", detail=f"Feasible range {p_lo:.1f} - {p_hi:.1f} MPa"))
+        out.append(_chk("af.reverse", "No reverse yield after autofrettage",
+                        extra["reverse_yield_ratio"] <= REVERSE_YIELD_LIMIT + 1e-6,
+                        value=extra["reverse_yield_ratio"], limit=REVERSE_YIELD_LIMIT,
+                        detail="Residual liner von Mises / yield (0.9 allows for the Bauschinger effect)"))
+        out.append(_chk("af.fiber", "Fibre strain during autofrettage", extra["af_fiber_ratio"] <= AF_FIBER_RATIO_LIMIT,
+                        warn=extra["af_fiber_ratio"] < 1.0, value=extra["af_fiber_ratio"], limit=AF_FIBER_RATIO_LIMIT,
+                        detail="Fibres would fail during autofrettage" if extra["af_fiber_ratio"] >= 1.0 else ""))
+        out.append(_chk("liner.meop", "Liner elastic at MEOP", extra["meop_yield_ratio"] <= 1.0 + 1e-6,
+                        value=extra["meop_yield_ratio"], limit=1.0))
+        out.append(_chk("liner.proof", "Liner elastic at proof", extra["proof_plastic"] <= 1e-6, warn=True,
+                        detail="Proof below the autofrettage pressure keeps the liner elastic."))
+        out.append(_chk("fatigue", "Liner fatigue life", st.liner_fatigue_cycles >= need,
+                        value=st.liner_fatigue_cycles, limit=need, unit="cycles",
+                        detail="SWT estimate with indicative S-N data; confirm by test."))
     tr = extra.get("tension")
     if tr is not None and len(tr.loss):
         worst = int(np.argmax(tr.loss))
-        out.append(_chk("tension.loss", "Winding prestress retained", tr.loss[worst] <= 0.6, warn=tr.residual_stress[worst] > 0,
+        out.append(_chk("tension.loss", "Winding prestress retained", tr.loss[worst] <= 0.6,
+                        warn=tr.residual_stress[worst] > 0 or lmat.polymer,
                         value=float(tr.loss[worst]), limit=0.6, refs=[b.layers[worst].spec.id],
                         detail=(f"Layer {worst + 1} loses {tr.loss[worst] * 100:.0f}% of its winding prestress as later "
                                 "layers compress it (slack inner layers wrinkle). Use the tension schedule.")
@@ -518,10 +636,11 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
                         value=fe.dome_burst, limit=st.required_burst, unit="MPa",
                         detail=f"Critical: layer {fe.critical_layer} in the {where} (z = {fe.critical_z:.0f} mm). "
                                "Cylinder burst scaled by the FE fibre strain distribution."))
-        out.append(_chk("fe.liner", "Liner fatigue hot spot (FE)", fe.liner_hotspot_cycles >= need,
-                        value=fe.liner_hotspot_cycles, limit=need, unit="cycles",
-                        detail=f"Liner stress range {fe.liner_hotspot_factor:.2f}x the cylinder value at "
-                               f"z = {fe.liner_hotspot_z:.0f} mm (bending at dome/boss transitions)."))
+        if not lmat.polymer:
+            out.append(_chk("fe.liner", "Liner fatigue hot spot (FE)", fe.liner_hotspot_cycles >= need,
+                            value=fe.liner_hotspot_cycles, limit=need, unit="cycles",
+                            detail=f"Liner stress range {fe.liner_hotspot_factor:.2f}x the cylinder value at "
+                                   f"z = {fe.liner_hotspot_z:.0f} mm (bending at dome/boss transitions)."))
     cyl, dome = extra["cyl_helical_stress"], extra["dome_helical_stress"]
     if np.isfinite(cyl) and np.isfinite(dome) and cyl > 0:
         ratio = dome / cyl
@@ -738,9 +857,11 @@ def suggest_layup(project: S.Project, max_iter: int = 60, progressive: bool = Fa
         fails = {c.id for c in res.checks if c.status == "fail"}
         warns = {c.id for c in res.checks if c.status == "warn"}
         fails = {f for f in fails if not f.startswith("tension.")}
-        if st.burst_mode == "helical" or "sr.helical" in fails or "burst.balance" in warns:
+        rup_fail = {g.group for g in st.rupture.groups if g.pf > st.rupture.target} \
+            if "sr.reliability" in fails and st.rupture is not None else set()
+        if st.burst_mode == "helical" or "sr.helical" in fails or "burst.balance" in warns or "helical" in rup_fail:
             n_hel += 1
-        elif "burst" in fails or "sr.hoop" in fails:
+        elif "burst" in fails or "sr.hoop" in fails or "hoop" in rup_fail:
             n_hoop += 1
         elif "fe.burst" in fails and res.fe is not None:
             crit = next((L for L in layers if L.id == res.fe.critical_layer), None)
@@ -751,6 +872,13 @@ def suggest_layup(project: S.Project, max_iter: int = 60, progressive: bool = Fa
         elif "fe.liner" in fails and res.fe is not None:
             # liner bending hot spot on the dome: reinforce the domes (helicals), cylinder: hoops
             if abs(res.fe.liner_hotspot_z) > project.liner.cyl_length / 2:
+                n_hel += 1
+            else:
+                n_hoop += 1
+        elif "liner.strain" in fails:
+            # polymer liner strain follows the overwrap: stiffen the direction that strains most
+            pr = st.at_proof
+            if abs(pr.strain_axial) > abs(pr.strain_hoop):
                 n_hel += 1
             else:
                 n_hoop += 1
@@ -800,7 +928,9 @@ def _progressive_verify(project, layers, make, n_hel, n_hoop, max_add, notes):
                          f"{p_req:.1f} MPa required ({n_hel} helical + {n_hoop} hoop layers)")
             return layers, n_hel, n_hoop
         crit = b.layers[r.burst_layer].spec if r.burst_layer >= 0 else None
-        where = f"z = {r.burst_z:.0f} mm" if np.isfinite(r.burst_z) else "unknown location"
+        where = f"z = {r.burst_z:.0f} mm" if np.isfinite(r.burst_z) else "no fibre failure located"
+        if r.notes:
+            where += "; " + "; ".join(r.notes)
         if crit is not None and crit.type == "hoop" or crit is None and abs(r.burst_z) < project.liner.cyl_length / 2:
             n_hoop += 1
             added = "hoop"

@@ -72,3 +72,20 @@ export function ChecksList({
     </div>
   );
 }
+
+/** "Type III (metal liner)" / "Type IV (polymer liner)" badge. */
+export function LinerTypeBadge({ polymer }: { polymer: boolean }) {
+  return polymer ? (
+    <span className="type-badge t-type4" title="Polymer liner: no autofrettage, liner strain and H₂ permeation checks">
+      Type IV (polymer liner)
+    </span>
+  ) : (
+    <span className="type-badge t-type3" title="Metal liner: autofrettage, liner fatigue and leak-before-burst checks">
+      Type III (metal liner)
+    </span>
+  );
+}
+
+/** Note for autofrettage-related UI when the liner is a polymer. */
+export const NO_AUTOFRETTAGE_NOTE =
+  'Type IV vessels are not autofrettaged: the first load is the proof test (autofrettage pressure = proof pressure).';

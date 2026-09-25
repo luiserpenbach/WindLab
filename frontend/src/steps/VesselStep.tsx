@@ -3,11 +3,11 @@ import { NumberField, Section, SelectField, Segmented, Switch, Field, NumberInpu
 import { LineChart, type Series } from '../components/LineChart';
 import { Banner, Button } from '../components/ui';
 import { useAnalysis } from '../state/analysis';
-import { findMat, matOptions, useMaterialLists } from '../state/materials';
+import { findMat, isPolymerLiner, matOptions, useMaterialLists } from '../state/materials';
 import { patchSection, useProject } from '../state/projectStore';
 import { layerColors } from '../viewer/colors';
 import { sig } from '../util/format';
-import { ChecksList } from './shared';
+import { ChecksList, LinerTypeBadge, NO_AUTOFRETTAGE_NOTE } from './shared';
 import { checksForStep } from './stepStatus';
 
 export function VesselPanel() {
@@ -20,6 +20,7 @@ export function VesselPanel() {
   const setR = (patch: Partial<Requirements>, key: string) => update(patchSection('requirements', patch), `req.${key}`);
   const linerE = findMat(lists.liners, l.material);
   const linerMat = linerE?.rec;
+  const polymer = isPolymerLiner(linerMat);
   const st = result?.structural;
   const bar = (mpa: number) => `${sig(mpa * 10, 4)} bar`;
   // Mirrors the backend's auto values (core/geometry.py) for display.
@@ -46,11 +47,16 @@ export function VesselPanel() {
           options={matOptions(lists.liners)}
           onChange={(v) => setL({ material: v }, 'material')}
           hint={
-            linerMat
-              ? `${linerE?.custom ? 'Custom · ' : ''}E ${sig(linerMat.E / 1000, 3)} GPa · Rp0.2 ${sig(linerMat.yield, 3)} MPa · Rm ${sig(linerMat.ultimate, 3)} MPa · ρ ${linerMat.density} g/cm³ · K_IC ${sig(linerMat.k_ic, 3)} MPa√m`
-              : lists.loaded
-                ? 'Unknown material id: add it to the materials library (Materials step)'
-                : undefined
+            linerMat ? (
+              <>
+                <LinerTypeBadge polymer={polymer} />{' '}
+                {polymer
+                  ? `${linerE?.custom ? 'Custom · ' : ''}E ${sig(linerMat.E / 1000, 3)} GPa · σy ${sig(linerMat.yield, 3)} MPa · ρ ${linerMat.density} g/cm³ · max ${sig(linerMat.max_temp, 3)} °C · H₂ ${sig(linerMat.h2_permeability, 3)} Barrer`
+                  : `${linerE?.custom ? 'Custom · ' : ''}E ${sig(linerMat.E / 1000, 3)} GPa · Rp0.2 ${sig(linerMat.yield, 3)} MPa · Rm ${sig(linerMat.ultimate, 3)} MPa · ρ ${linerMat.density} g/cm³ · K_IC ${sig(linerMat.k_ic, 3)} MPa√m`}
+              </>
+            ) : lists.loaded ? (
+              'Unknown material id: add it to the materials library (Materials step)'
+            ) : undefined
           }
         />
         <NumberField
@@ -236,40 +242,46 @@ export function VesselPanel() {
           hint={`Proof ${sig(r.meop * r.proof_factor, 4)} MPa (${bar(r.meop * r.proof_factor)})`}
           onCommit={(v) => setR({ proof_factor: v }, 'pf')}
         />
-        <Field
-          label="Autofrettage"
-          hint={
-            st
-              ? `${st.autofrettage_auto ? 'Auto-selected' : 'Set'} ${sig(st.autofrettage_pressure, 4)} MPa · window ${sig(st.autofrettage_window[0], 4)} – ${sig(st.autofrettage_window[1], 4)} MPa`
-              : 'Pressure that yields the liner to set compressive residual stress'
-          }
-        >
-          <div className="inline">
-            <Switch
-              checked={r.autofrettage_pressure == null}
-              label="Auto"
-              onChange={(auto) =>
-                setR(
-                  {
-                    autofrettage_pressure: auto
-                      ? null
-                      : Number(sig(st?.autofrettage_pressure ?? r.meop * r.proof_factor * 1.1, 4)),
-                  },
-                  'af',
-                )
-              }
-            />
-            <NumberInput
-              ariaLabel="Autofrettage pressure"
-              value={r.autofrettage_pressure ?? st?.autofrettage_pressure ?? null}
-              disabled={r.autofrettage_pressure == null}
-              unit="MPa"
-              gt={0}
-              step={1}
-              onCommit={(v) => setR({ autofrettage_pressure: v }, 'afp')}
-            />
-          </div>
-        </Field>
+        {polymer ? (
+          <Field label="Autofrettage" hint={NO_AUTOFRETTAGE_NOTE}>
+            <span className="muted">None (Type IV)</span>
+          </Field>
+        ) : (
+          <Field
+            label="Autofrettage"
+            hint={
+              st
+                ? `${st.autofrettage_auto ? 'Auto-selected' : 'Set'} ${sig(st.autofrettage_pressure, 4)} MPa · window ${sig(st.autofrettage_window[0], 4)} – ${sig(st.autofrettage_window[1], 4)} MPa`
+                : 'Pressure that yields the liner to set compressive residual stress'
+            }
+          >
+            <div className="inline">
+              <Switch
+                checked={r.autofrettage_pressure == null}
+                label="Auto"
+                onChange={(auto) =>
+                  setR(
+                    {
+                      autofrettage_pressure: auto
+                        ? null
+                        : Number(sig(st?.autofrettage_pressure ?? r.meop * r.proof_factor * 1.1, 4)),
+                    },
+                    'af',
+                  )
+                }
+              />
+              <NumberInput
+                ariaLabel="Autofrettage pressure"
+                value={r.autofrettage_pressure ?? st?.autofrettage_pressure ?? null}
+                disabled={r.autofrettage_pressure == null}
+                unit="MPa"
+                gt={0}
+                step={1}
+                onCommit={(v) => setR({ autofrettage_pressure: v }, 'afp')}
+              />
+            </div>
+          </Field>
+        )}
         <NumberField
           label="Stress ratio limit"
           unit="σ/σu"
@@ -333,8 +345,77 @@ export function VesselPanel() {
           value={r.temperature_ref}
           min={-273}
           step={1}
-          hint={`Temperature of autofrettage and proof; cure / stress-free ${sig(project.composite.cure_temperature, 4)} °C (Materials step)`}
+          hint={`Temperature of ${polymer ? 'the' : 'autofrettage and'} proof; cure / stress-free ${sig(project.composite.cure_temperature, 4)} °C (Materials step)`}
           onCommit={(v) => setR({ temperature_ref: v }, 'tref')}
+        />
+      </Section>
+
+      <Section title="Stress rupture" defaultOpen={false}>
+        <NumberField
+          label="Service life"
+          unit="years"
+          value={r.service_life}
+          gt={0}
+          step={1}
+          hint="Service life for the stress-rupture reliability"
+          onCommit={(v) => setR({ service_life: v }, 'life')}
+        />
+        <NumberField
+          label="Time at MEOP"
+          unit="%"
+          value={Number((r.time_at_meop * 100).toPrecision(10))}
+          gt={0}
+          max={100}
+          step={5}
+          hint="Share of the service life spent at MEOP (the rest unpressurised)"
+          onCommit={(v) => setR({ time_at_meop: Number((v / 100).toPrecision(10)) }, 'tmeop')}
+        />
+        <NumberField
+          label="Target Pf"
+          value={r.rupture_pf_target}
+          gt={0}
+          lt={0.5}
+          step={1e-6}
+          hint="Allowed stress-rupture failure probability over the service life (e.g. 1e-6)"
+          onCommit={(v) => setR({ rupture_pf_target: v }, 'pft')}
+        />
+        <NumberField
+          label="Hold time"
+          unit="s"
+          value={r.hold_time}
+          min={0}
+          step={10}
+          hint={
+            polymer
+              ? 'Hold at the proof pressure (surviving it earns reliability credit; Type IV: no autofrettage)'
+              : 'Hold at the autofrettage and proof pressures (surviving them earns reliability credit)'
+          }
+          onCommit={(v) => setR({ hold_time: v }, 'hold')}
+        />
+      </Section>
+
+      {/* Remount on a liner kind change so the section opens for polymer liners. */}
+      <Section key={polymer ? 'perm-t4' : 'perm-t3'} title="Permeation (Type IV)" defaultOpen={polymer}>
+        {!polymer ? (
+          <p className="muted small">Applies to polymer (Type IV) liners only; the current liner is metal.</p>
+        ) : null}
+        <NumberField
+          label="Permeation limit"
+          unit="NmL/h/L"
+          value={r.permeation_limit}
+          gt={0}
+          step={1}
+          hint="Allowed steady-state H₂ permeation at MEOP, per litre of water capacity (e.g. 46 NmL/h/L)"
+          onCommit={(v) => setR({ permeation_limit: v }, 'perm')}
+        />
+        <NumberField
+          label="Permeation temp."
+          unit="°C"
+          value={r.permeation_temperature}
+          min={-273}
+          step={5}
+          hint="Temperature of the permeation test (e.g. 55 °C)"
+          onCommit={(v) => setR({ permeation_temperature: v }, 'permT')}
         />
       </Section>
 

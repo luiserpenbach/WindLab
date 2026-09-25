@@ -29,6 +29,8 @@ const DIFF_FIELDS: [keyof Layer, string][] = [
   ['turnaround_offset', 'turn. A'],
   ['turnaround_offset_b', 'turn. B'],
   ['pattern', 'pattern'],
+  ['pattern_number', 'style p'],
+  ['pattern_direction', 'style dir'],
   ['end_offset_a', 'end A'],
   ['end_offset_b', 'end B'],
   ['overlap', 'overlap'],

@@ -1,5 +1,14 @@
-import { useRef } from 'react';
-import type { AxesCount, Controller, MachineAxis, MachineSpec, RotaryReset, TensionOutput } from '../api/types';
+import { useRef, useState } from 'react';
+import { api, errorMessage } from '../api/client';
+import type {
+  AxesCount,
+  ContinuousSpec,
+  Controller,
+  MachineAxis,
+  MachineSpec,
+  RotaryReset,
+  TensionOutput,
+} from '../api/types';
 import {
   Field,
   NumberField,
@@ -11,10 +20,12 @@ import {
   Switch,
   TextInput,
 } from '../components/fields';
-import { Banner } from '../components/ui';
+import { Banner, Button, Spinner, StatusPill } from '../components/ui';
 import { useAnalysis, useCatalog } from '../state/analysis';
 import { axis, normalizeProject } from '../state/defaults';
 import { patchSection, useProject } from '../state/projectStore';
+import { useUi } from '../state/uiStore';
+import { sig } from '../util/format';
 import { ChecksList } from './shared';
 import { checksForStep } from './stepStatus';
 
@@ -341,7 +352,10 @@ export function MachinePanel() {
           onChange={(v) => set({ rotary_reset: v }, 'rr')}
           hint="Re-zero the mandrel coordinate (G92) to limit numeric growth"
         />
-        <Field label="Pause between layers">
+        <Field
+          label="Pause between layers"
+          hint={project.continuous.enabled ? 'Skipped: continuous winding is enabled' : undefined}
+        >
           <Switch
             checked={m.pause_between_layers}
             onChange={(v) => set({ pause_between_layers: v }, 'pbl')}
@@ -350,8 +364,162 @@ export function MachinePanel() {
         </Field>
       </Section>
 
+      <ContinuousSection />
+
       {result ? <ChecksList checks={checksForStep(result.checks, 'machine')} title="Machine checks" /> : null}
     </>
+  );
+}
+
+const TRANSITION_KIND: Record<string, string> = {
+  direct: 'direct',
+  passes: 'passes',
+  hoop: 'hoop ramp',
+};
+
+/** Continuous winding settings and the transition plan (POST /api/continuous). */
+function ContinuousSection() {
+  const { project, update } = useProject();
+  const { continuousPlan: plan, setContinuousPlan } = useUi();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const c = project.continuous;
+  const set = (patch: Partial<ContinuousSpec>, key: string) => update(patchSection('continuous', patch), `cont.${key}`);
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.continuous(project);
+      setContinuousPlan({ result: r, project });
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const r = plan?.result ?? null;
+  const stale = !!plan && plan.project !== project;
+  return (
+    <Section title="Continuous winding">
+      <Field
+        label="Continuous"
+        hint="The roving is not cut between layers; WindLab plans the transitions. Angle changes larger than the max step get transition passes at intermediate angles; hoop ↔ helical changes use a friction-limited ramp on the cylinder."
+      >
+        <Switch checked={c.enabled} onChange={(v) => set({ enabled: v }, 'en')} label={c.enabled ? 'On' : 'Off'} />
+      </Field>
+      <NumberField
+        label="Max angle step"
+        unit="°"
+        value={c.max_angle_step}
+        gt={0.5}
+        max={45}
+        step={1}
+        hint="Largest change of cylinder winding angle across one turnaround"
+        onCommit={(v) => set({ max_angle_step: v }, 'step')}
+      />
+      <NumberField
+        label="Slippage margin"
+        value={c.slippage_margin}
+        gt={0.1}
+        max={1}
+        step={0.05}
+        hint="Fraction of the layer friction the transition paths may use"
+        onCommit={(v) => set({ slippage_margin: v }, 'slip')}
+      />
+      <div className="inline">
+        <Button size="sm" icon="play" variant={!r || stale ? 'primary' : 'default'} onClick={run} disabled={busy}>
+          {r ? (stale ? 'Re-plan (project changed)' : 'Re-plan transitions') : 'Plan transitions'}
+        </Button>
+        {busy ? <Spinner label="Planning transitions" /> : null}
+      </div>
+      {error ? <Banner kind="fail">{error}</Banner> : null}
+      {r ? (
+        <>
+          {stale ? <p className="muted small stale-note">Planned for an earlier version of the project.</p> : null}
+          <p className="small">
+            <StatusPill status={r.feasible ? 'ok' : 'fail'}>{r.feasible ? 'Feasible' : 'Not feasible'}</StatusPill>{' '}
+            {r.transitions.length} transition{r.transitions.length === 1 ? '' : 's'} · {r.total_passes} extra pass
+            {r.total_passes === 1 ? '' : 'es'} · {sig(r.fibre_length / 1000, 3)} m · {sig(r.fibre_mass, 3)} g
+          </p>
+          {r.transitions.length ? (
+            <div className="table-scroll">
+              <table className="data-table compact">
+                <caption>Transitions (shown in the 3D view)</caption>
+                <thead>
+                  <tr>
+                    <th>From → to</th>
+                    <th>Kind</th>
+                    <th className="num" title="Transition passes">
+                      n
+                    </th>
+                    <th title="Cylinder angle of each transition pass [°]">Angles °</th>
+                    <th className="num" title="Max slippage / friction limit">
+                      Slip
+                    </th>
+                    <th className="num" title="Fibre length [m]">
+                      m
+                    </th>
+                    <th className="num" title="Fibre mass [g]">
+                      g
+                    </th>
+                    <th className="num" title="Phase-matching dwell [°]">
+                      Dwell °
+                    </th>
+                    <th>OK</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {r.transitions.map((t, i) => (
+                    <tr key={i} title={t.notes.join('\n') || undefined}>
+                      <td>
+                        {t.from_layer} → {t.to_layer}
+                        <span className="muted small">
+                          {' '}
+                          {sig(t.angle_from, 3)}° → {sig(t.angle_to, 3)}°
+                        </span>
+                      </td>
+                      <td>{TRANSITION_KIND[t.kind] ?? t.kind}</td>
+                      <td className="num">{t.passes}</td>
+                      <td className="small">{t.angles.length ? t.angles.map((a) => sig(a, 3)).join(', ') : '–'}</td>
+                      <td className={`num ${t.max_slippage > t.friction_limit ? 'bad' : ''}`}>
+                        {sig(t.max_slippage, 2)} / {sig(t.friction_limit, 2)}
+                      </td>
+                      <td className="num">{sig(t.fibre_length / 1000, 3)}</td>
+                      <td className="num">{sig(t.fibre_mass, 3)}</td>
+                      <td className="num">{sig(t.dwell, 3)}</td>
+                      <td>
+                        <StatusPill status={t.feasible ? 'ok' : 'fail'}>{t.feasible ? 'OK' : 'No'}</StatusPill>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          {r.transitions.some((t) => t.notes.length) ? (
+            <ul className="notes-list">
+              {r.transitions.flatMap((t, i) =>
+                t.notes.map((n, j) => (
+                  <li key={`${i}-${j}`}>
+                    <strong>
+                      {t.from_layer} → {t.to_layer}:
+                    </strong>{' '}
+                    {n}
+                  </li>
+                )),
+              )}
+            </ul>
+          ) : null}
+          {r.notes.length ? (
+            <ul className="notes-list">
+              {r.notes.map((n, i) => (
+                <li key={i}>{n}</li>
+              ))}
+            </ul>
+          ) : null}
+        </>
+      ) : null}
+    </Section>
   );
 }
 

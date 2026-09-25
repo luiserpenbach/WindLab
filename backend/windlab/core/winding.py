@@ -159,9 +159,10 @@ def helical_layer_path(
 
 def hoop_layer_path(
     profile: Profile, z_start: float, z_end: float, band_width: float, passes: int, samples_per_rev: int = 72,
-    pitch: Optional[float] = None,
+    pitch: Optional[float] = None, reverse: bool = False,
 ) -> PathPoints:
-    """Hoop helix advancing ``pitch`` (default one band width) per revolution, ``passes`` traverses."""
+    """Hoop helix advancing ``pitch`` (default one band width) per revolution, ``passes`` traverses
+    (starting at end A, or at end B with ``reverse``)."""
     pitch = pitch or band_width
     zs, ps, starts = [], [], []
     lo, hi = z_start + band_width / 2, z_end - band_width / 2
@@ -173,7 +174,7 @@ def hoop_layer_path(
     for k in range(passes):
         starts.append(sum(len(a) for a in zs))
         t = np.linspace(0.0, 1.0, n)
-        z = lo + (hi - lo) * t if k % 2 == 0 else hi - (hi - lo) * t
+        z = lo + (hi - lo) * t if (k % 2 == 0) != reverse else hi - (hi - lo) * t
         zs.append(z), ps.append(phi + 2 * np.pi * revs * t)
         phi += 2 * np.pi * revs
         # half a revolution of dwell at each reversal locks the band

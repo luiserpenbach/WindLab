@@ -215,6 +215,19 @@ def post_ccx_export(project: S.Project):
     return _design_errors(run)
 
 
+@app.post("/api/continuous", response_model=S.ContinuousResult)
+def post_continuous(project: S.Project):
+    """Continuous-winding plan: transition passes between all layers (uses ``project.continuous`` settings,
+    whether or not continuous winding is enabled for G-code)."""
+    from .core.continuous import plan, to_schema
+
+    def run():
+        b = build(project)
+        return to_schema(b, plan(b))
+
+    return _design_errors(run)
+
+
 @app.post("/api/progressive", response_model=S.ProgressiveResultOut)
 def post_progressive(req: S.ProgressiveRequest):
     """Progressive failure analysis (nonlinear shell with liner plasticity, Puck IFF, fibre failure).

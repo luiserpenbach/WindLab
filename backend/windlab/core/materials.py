@@ -70,6 +70,15 @@ class LinerMaterial:
     fatigue_exp: float  # Basquin b [-]
     cte: float = 23.6e-6  # [1/K]
     k_ic: float = 29.0  # plane-strain fracture toughness [MPa sqrt(m)]
+    kind: str = "metal"  # "metal" (Type III) | "polymer" (Type IV)
+    max_temp: float = 150.0  # highest service / processing temperature [degC]
+    strain_limit: float = 0.0  # polymer: allowable liner strain at proof [-] (0: not applicable)
+    h2_permeability: float = 0.0  # H2 permeability at 20 degC [Barrer]
+    perm_activation: float = 0.0  # permeability activation energy [kJ/mol]
+
+    @property
+    def polymer(self) -> bool:
+        return self.kind == "polymer"
 
     @property
     def hardening(self) -> float:
@@ -123,6 +132,11 @@ LINERS: dict[str, LinerMaterial] = {
                       8.6e-6, 75.0),
         LinerMaterial("SS316L", "Stainless 316L (annealed)", 193_000, 0.30, 290, 580, 7.99, 0.40, 1000, -0.114,
                       16.0e-6, 200.0),
+        # Type IV liners (indicative values; the liner carries almost no load). Permeability: H2, 20 degC
+        LinerMaterial("HDPE", "HDPE (rotomoulded / blow-moulded, Type IV)", 1_000, 0.42, 24, 30, 0.955, 0.5, 60,
+                      -0.1, 150e-6, 2.0, "polymer", 85.0, 0.03, 1.3, 35.0),
+        LinerMaterial("PA6", "Polyamide 6 (conditioned, Type IV)", 2_000, 0.39, 55, 70, 1.13, 0.3, 120, -0.1,
+                      90e-6, 3.0, "polymer", 120.0, 0.025, 0.15, 40.0),
     ]
 }
 
@@ -225,7 +239,8 @@ def get_liner(lid: str, lib=None) -> LinerMaterial:
     for m in getattr(lib, "liners", None) or []:
         if m.id == lid:
             return LinerMaterial(m.id, m.name, m.E, m.nu, m.yield_, m.ultimate, m.density, m.elongation,
-                                 m.fatigue_coeff, m.fatigue_exp, m.cte, m.k_ic)
+                                 m.fatigue_coeff, m.fatigue_exp, m.cte, m.k_ic, m.kind, m.max_temp, m.strain_limit,
+                                 m.h2_permeability, m.perm_activation)
     if lid not in LINERS:
         raise KeyError(f"Unknown liner material '{lid}'")
     return LINERS[lid]

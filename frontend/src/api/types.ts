@@ -57,6 +57,18 @@ export interface Requirements {
   temperature_max: number;
   /** Ambient temperature of autofrettage / proof [degC] */
   temperature_ref: number;
+  /** Service life for stress-rupture reliability [years], > 0 */
+  service_life: number;
+  /** Fraction of the service life spent at MEOP (rest unpressurised), 0 < x <= 1 */
+  time_at_meop: number;
+  /** Allowed stress-rupture failure probability over the service life, 0 < x < 0.5 */
+  rupture_pf_target: number;
+  /** Hold time at the autofrettage and proof pressures [s], >= 0 */
+  hold_time: number;
+  /** Type IV: allowed H2 permeation at MEOP and permeation_temperature [NmL/h per L], > 0 */
+  permeation_limit: number;
+  /** Type IV permeation test temperature [degC] */
+  permeation_temperature: number;
 }
 
 // ---------------------------------------------------------------- custom materials
@@ -98,6 +110,8 @@ export interface CustomResin {
   cte: number;
 }
 
+export type LinerKind = 'metal' | 'polymer';
+
 export interface CustomLiner {
   id: string;
   name: string;
@@ -120,6 +134,16 @@ export interface CustomLiner {
   cte: number;
   /** Fracture toughness [MPa sqrt(m)] */
   k_ic: number;
+  /** metal: Type III; polymer: Type IV liner */
+  kind: LinerKind;
+  /** Highest service / processing temperature [degC] */
+  max_temp: number;
+  /** Polymer: allowable liner strain at proof [-] (0: not applicable) */
+  strain_limit: number;
+  /** H2 permeability at 20 degC [Barrer] */
+  h2_permeability: number;
+  /** Permeability activation energy [kJ/mol] */
+  perm_activation: number;
 }
 
 /** Project-specific materials; they take precedence over the built-in database. */
@@ -138,6 +162,10 @@ export interface CompositeSpec {
   translation_efficiency: number;
   /** Stress-free temperature of the liner/composite bond (cure) [degC] */
   cure_temperature: number;
+  /** Weibull shape of the vessel burst strength, > 1; null = fibre-family default */
+  strength_weibull_shape: number | null;
+  /** Stress-rupture power-law exponent, > 1; null = calibrated to the standards' stress ratios */
+  rupture_exponent: number | null;
 }
 
 export interface PatternChoice {
@@ -150,6 +178,7 @@ export interface PatternChoice {
 export type LayerType = 'hoop' | 'helical';
 export type WindingType = 'geodesic' | 'non-geodesic';
 export type BandShape = 'rectangular' | 'lenticular' | 'elliptical';
+export type PatternDirection = 'any' | 'leading' | 'lagging';
 
 export interface Layer {
   id: string;
@@ -172,6 +201,10 @@ export interface Layer {
   turnaround_offset_b: number | null;
   /** null = auto-select best pattern */
   pattern: PatternChoice | null;
+  /** Pattern style: diamonds around the circumference (1-2 large, >= 8 fine), 1..60; null = auto */
+  pattern_number: number | null;
+  /** Pattern style: advance direction of successive circuits */
+  pattern_direction: PatternDirection;
   /** Max dwell per turnaround [deg], 0..360 */
   dwell_max: number;
   // hoop
@@ -236,6 +269,15 @@ export interface MachineSpec {
   pause_between_layers: boolean;
 }
 
+/** Continuous winding: the roving is not cut between layers; WindLab plans transition paths. */
+export interface ContinuousSpec {
+  enabled: boolean;
+  /** Largest change of cylinder winding angle across one turnaround [deg], 0.5 < x <= 45 */
+  max_angle_step: number;
+  /** Fraction of the layer friction usable by transition paths, 0.1 < x <= 1 */
+  slippage_margin: number;
+}
+
 export interface Project {
   schema_version: number;
   name: string;
@@ -246,6 +288,7 @@ export interface Project {
   materials: MaterialLibrary;
   layers: Layer[];
   machine: MachineSpec;
+  continuous: ContinuousSpec;
   tests: TestRecord[];
 }
 
@@ -401,6 +444,41 @@ export interface StructuralResult {
   netting_helical_thickness: number;
   /** Netting fibre stress at MEOP along z */
   dome_fiber_stress: Curve;
+  /** Stress-rupture reliability over the service life (newer backends) */
+  rupture?: RuptureResult | null;
+}
+
+export interface RuptureGroup {
+  /** "hoop" | "helical" */
+  group: string;
+  /** Fibre stress ratio at MEOP / autofrettage / proof */
+  ratio_meop: number;
+  ratio_autofrettage: number;
+  ratio_proof: number;
+  /** Service failure probability, conditional on surviving autofrettage + proof */
+  pf: number;
+  pf_no_proof_credit: number;
+  /** Service years until pf reaches the target (capped at 1e12) */
+  life_years: number;
+  /** Highest MEOP stress ratio meeting the target over the service life */
+  allowed_ratio: number;
+}
+
+export interface RuptureResult {
+  family: string;
+  weibull_shape: number;
+  exponent: number;
+  alpha: number;
+  /** Exponent calibrated to the standards' stress ratios (not user-set) */
+  calibrated: boolean;
+  groups: RuptureGroup[];
+  pf: number;
+  reliability: number;
+  target: number;
+  /** [years] */
+  service_life: number;
+  curve_years: number[];
+  curve_pf: number[];
 }
 
 /** Axisymmetric shell FE of the whole vessel at MEOP (linear elastic operating cycle). */
@@ -635,6 +713,16 @@ export interface LinerMaterial {
   cte: number;
   /** Fracture toughness [MPa sqrt(m)] */
   k_ic: number;
+  /** metal: Type III; polymer: Type IV liner */
+  kind: LinerKind;
+  /** Highest service / processing temperature [degC] */
+  max_temp: number;
+  /** Polymer: allowable liner strain at proof [-] (0: not applicable) */
+  strain_limit: number;
+  /** H2 permeability at 20 degC [Barrer] */
+  h2_permeability: number;
+  /** Permeability activation energy [kJ/mol] */
+  perm_activation: number;
 }
 
 export interface MaterialsResponse {
@@ -695,6 +783,89 @@ export interface OptimiseRequest {
   project: Project;
   /** Wall-clock budget [s], 5..600 */
   time_budget: number;
+}
+
+// ---------------------------------------------------------------- progressive failure
+export type FailureEventKind = 'liner_yield' | 'iff' | 'ff' | 'liner_rupture' | 'burst';
+
+export interface FailureEvent {
+  /** [MPa] */
+  pressure: number;
+  phase: string;
+  kind: FailureEventKind;
+  /** Layer id, or 'liner' */
+  layer: string;
+  /** [mm] */
+  z: number;
+  /** Number of such events in this phase for this layer */
+  count: number;
+}
+
+/** POST /api/progressive: nonlinear shell with liner plasticity, Puck IFF and fibre failure. */
+export interface ProgressiveResult {
+  /** [MPa] */
+  burst_pressure: number;
+  /** [MPa] */
+  required_burst: number;
+  burst_z: number | null;
+  burst_layer: string | null;
+  /** cylinder / junction A|B / dome A|B */
+  burst_zone: string;
+  first_iff_pressure: number | null;
+  first_ff_pressure: number | null;
+  liner_yield_pressure: number | null;
+  events: FailureEvent[];
+  /** Burst ramp pressures [MPa] */
+  curve_pressure: number[];
+  /** Mid-cylinder hoop strain along the ramp (fraction) */
+  curve_hoop_strain: number[];
+  /** [mm] */
+  z: number[];
+  /** Per layer: fraction of points with fibre failure, over z */
+  ff_fraction: number[][];
+  /** Per layer: fraction of points with matrix cracks, over z */
+  iff_fraction: number[][];
+  /** Liner equivalent plastic strain at burst, over z */
+  liner_peeq: number[];
+  notes: string[];
+}
+
+// ---------------------------------------------------------------- continuous winding
+export type TransitionKind = 'direct' | 'passes' | 'hoop';
+
+export interface TransitionOut {
+  from_layer: string;
+  to_layer: string;
+  kind: TransitionKind | string;
+  /** [deg] */
+  angle_from: number;
+  angle_to: number;
+  passes: number;
+  /** Cylinder angle of each transition pass [deg] */
+  angles: number[];
+  max_slippage: number;
+  friction_limit: number;
+  /** [mm] */
+  fibre_length: number;
+  /** [g] */
+  fibre_mass: number;
+  /** Phase-matching dwell [deg] */
+  dwell: number;
+  feasible: boolean;
+  notes: string[];
+  /** Downsampled 3D path (part frame) */
+  points: number[][];
+}
+
+export interface ContinuousResult {
+  transitions: TransitionOut[];
+  total_passes: number;
+  /** [mm] */
+  fibre_length: number;
+  /** [g] */
+  fibre_mass: number;
+  feasible: boolean;
+  notes: string[];
 }
 
 export interface OptimiseResult {

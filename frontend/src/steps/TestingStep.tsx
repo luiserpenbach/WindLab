@@ -8,9 +8,11 @@ import { LineChart, type Series } from '../components/LineChart';
 import { Banner, Button, Empty, Kpi, Modal, Spinner } from '../components/ui';
 import { useAnalysis } from '../state/analysis';
 import { FAILURE_LOCATIONS, newTestRecord, normalizeTests, TEST_KINDS } from '../state/defaults';
+import { usePolymerLiner } from '../state/materials';
 import { patchSection, useProject } from '../state/projectStore';
 import { sig } from '../util/format';
 import { PressureTargets } from './PressureTargets';
+import { NO_AUTOFRETTAGE_NOTE } from './shared';
 
 // ------------------------------------------------------------------ shared calibration state (panel + bottom)
 interface CalState {
@@ -357,6 +359,7 @@ function updateTests(fn: (ts: TestRecord[]) => TestRecord[]) {
 
 export function TestingBottom() {
   const { project, update } = useProject();
+  const polymer = usePolymerLiner();
   const cal = useCal();
   const { result } = useAnalysis();
   const [paste, setPaste] = useState(false);
@@ -407,7 +410,10 @@ export function TestingBottom() {
         </span>
       </div>
       {!tests.length ? (
-        <Empty>No test records. Add burst, proof, autofrettage and cycle test results here.</Empty>
+        <Empty>
+          No test records. Add burst, proof, {polymer ? '' : 'autofrettage '}and cycle test results here.
+          {polymer ? ` ${NO_AUTOFRETTAGE_NOTE}` : null}
+        </Empty>
       ) : (
         <div className="table-scroll test-scroll">
           <table className="data-table test-table">

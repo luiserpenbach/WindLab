@@ -58,6 +58,10 @@ truth for fields and units). Server-side saves go to `~/.windlab/projects`
   ridges, polar build-up peaks.
 
 **Analysis**
+- **Type III and Type IV**: metal liners (autofrettage, reverse yield, liner fatigue, leak-before-burst) and
+  polymer liners (HDPE, PA6: no autofrettage; liner strain at proof, cure and service temperature limits,
+  H2 permeation vs the GTR 13 / EC 79 limit with Arrhenius temperature dependence, internal support pressure
+  needed while winding against liner buckling).
 - Cylinder: J2 elastic-plastic liner + CLT overwrap with thermal strains; cure cool-down residual stresses;
   autofrettage window and auto-selection; proof; MEOP at ambient and at the temperature extremes; burst
   (hoop-first check, helical reserve); stress-rupture ratios; liner fatigue (SWT).
@@ -67,12 +71,21 @@ truth for fields and units). Server-side saves go to `~/.windlab/projects`
   failure (modes A/B/C) with stiffness degradation, fibre failure per ply, full load history (cure,
   autofrettage, proof, MEOP) then a burst ramp; reports first matrix crack, first fibre failure, liner
   yield, the burst location and damage maps. The cylinder model also includes Puck matrix cracking.
+- **Stress-rupture reliability**: Weibull power-law breakdown (Coleman/Phoenix, as in NASA COPV
+  assessments) with cumulative damage over autofrettage, proof and service, credit for surviving the proof
+  test, failure probability over the service life per ply group, allowed stress ratio and life to target.
+  Parameters per fibre family calibrated to the ISO 11119 / 11439 stress ratios (overridable).
 - Netting sizing, dome netting check, **winding tension loss** and uniform-prestress tension schedule,
   **fibre bridging** detection, predicted **water-jacket volumetric expansion**.
 - **Suggest layup** (sizes to every check), **mass optimiser**, **test-data calibration** (burst /
   expansion correlation, suggested and B-basis translation efficiency).
 
 **Manufacturing**
+- **Continuous winding** (roving never cut): automatic transitions between layers. Helical layers join
+  directly when the angle changes by <= 7 deg (configurable); larger changes get transition passes at
+  intermediate angles and turnaround radii, each dome leg checked against friction; hoop <-> helical uses
+  friction-limited angle ramps on the cylinder; phase dwells keep every layer's planned pattern. Transition
+  fibre length/mass reported; G-code winds the whole vessel in one program.
 - Kinematics for 2-axis (fixed eye radius), 3-axis and 4-axis (eye roll) machines, clearance envelope from
   the wound part, bosses and shaft; free-fibre clearance check; time planning with velocity and
   acceleration limits; soft limits.

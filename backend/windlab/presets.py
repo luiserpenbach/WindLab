@@ -99,6 +99,24 @@ def _examples_raw() -> list[tuple[str, str, S.Project]]:
             ),
         ),
         (
+            "type4-35mpa-h2",
+            "Type IV hydrogen, 35 MPa NWP, 17 L, HDPE liner (LinuxCNC 4-axis)",
+            S.Project(
+                name="Type IV H2 35 MPa",
+                liner=S.LinerSpec(material="HDPE", radius=110, cyl_length=400, wall_thickness=5.0,
+                                  dome_type="isotensoid", boss_radius_a=22, boss_radius_b=22, boss_length=30,
+                                  shaft_radius=10),
+                # NWP 35 MPa: MEOP 1.25 NWP, burst 2.25 NWP, proof 1.5 NWP (GTR 13 / EC 79 style)
+                requirements=S.Requirements(meop=43.75, burst_factor=1.8, proof_factor=1.2, design_cycles=11000,
+                                            temperature_max=85.0),
+                composite=S.CompositeSpec(fiber="T700S-24K", cure_temperature=80.0),
+                layers=[
+                    S.Layer(id="h", type="helical", band_width=10.0, tension=30),
+                    S.Layer(id="c", type="hoop", band_width=10.0, tension=40),
+                ],
+            ),
+        ),
+        (
             "grbl-10mpa-1l",
             "Desktop demo, 10 MPa, 1 L, elliptical domes (GRBL 3-axis)",
             S.Project(

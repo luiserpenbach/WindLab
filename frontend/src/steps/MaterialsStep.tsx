@@ -1,6 +1,6 @@
 import { useId, useSyncExternalStore } from 'react';
-import type { CompositeSpec, Fiber, Resin } from '../api/types';
-import { Field, NumberField, Section, SelectField, SliderField } from '../components/fields';
+import type { CompositeSpec, Fiber, LinerKind, Resin } from '../api/types';
+import { Field, NumberField, NumberInput, Section, SelectField, SliderField, Switch } from '../components/fields';
 import { Icon } from '../components/Icon';
 import { Banner, Button, Empty, Modal } from '../components/ui';
 import { useAnalysis } from '../state/analysis';
@@ -16,7 +16,7 @@ import {
 } from '../state/materials';
 import { patchSection, useProject } from '../state/projectStore';
 import { sig } from '../util/format';
-import { ChecksList } from './shared';
+import { ChecksList, LinerTypeBadge } from './shared';
 import { checksForStep } from './stepStatus';
 
 // ------------------------------------------------------------------ field specs (table + editor)
@@ -79,6 +79,46 @@ const LINER_FIELDS: NumSpec[] = [
   { key: 'fatigue_exp', label: 'Fatigue exponent b', short: 'b', unit: '', lt: 0, step: 0.005 },
   { key: 'cte', label: 'CTE', short: 'α', unit: CTE_UNIT, scale: 1e6, step: 0.5 },
   { key: 'k_ic', label: 'Fracture toughness', short: 'K_IC', unit: 'MPa√m', gt: 0, step: 1, hint: 'Leak-before-burst' },
+];
+
+/** Type IV (polymer liner) properties; shown in the editor for polymer liners only. */
+const POLYMER_LINER_FIELDS: NumSpec[] = [
+  {
+    key: 'max_temp',
+    label: 'Max. temperature',
+    short: 'Tmax',
+    unit: '°C',
+    step: 5,
+    hint: 'Highest service / processing temperature (checked against the cure and operating temperatures)',
+  },
+  {
+    key: 'strain_limit',
+    label: 'Strain limit',
+    short: 'εlim',
+    unit: '%',
+    scale: 100,
+    min: 0,
+    step: 0.1,
+    hint: 'Allowable liner strain at proof',
+  },
+  {
+    key: 'h2_permeability',
+    label: 'H₂ permeability',
+    short: 'P(H₂)',
+    unit: 'Barrer',
+    min: 0,
+    step: 0.1,
+    hint: 'At 20 °C',
+  },
+  {
+    key: 'perm_activation',
+    label: 'Permeation activation energy',
+    short: 'Ep',
+    unit: 'kJ/mol',
+    min: 0,
+    step: 1,
+    hint: 'Arrhenius temperature dependence of the permeability',
+  },
 ];
 
 const KIND_META: Record<MatKind, { one: string; many: string; fields: NumSpec[]; fresh: (id: string) => Rec }> = {
@@ -231,6 +271,7 @@ export function MaterialsPanel() {
   const lists = useMaterialLists();
   const { result } = useAnalysis();
   const c = project.composite;
+  const rupture = result?.structural?.rupture ?? null;
   const set = (patch: Partial<CompositeSpec>, key: string) => update(patchSection('composite', patch), `comp.${key}`);
   const fiberE = findMat(lists.fibers, c.fiber);
   const resinE = findMat(lists.resins, c.resin);
@@ -325,6 +366,58 @@ export function MaterialsPanel() {
           }
           onCommit={(v) => set({ cure_temperature: v }, 'cure')}
         />
+        <Field
+          label="Strength Weibull shape"
+          hint={
+            c.strength_weibull_shape == null
+              ? `Vessel burst-strength scatter for stress rupture: fibre-family default${rupture ? ` (${sig(rupture.weibull_shape, 3)}, ${rupture.family})` : ''}`
+              : 'Vessel burst-strength scatter for stress rupture (higher = less scatter)'
+          }
+        >
+          <div className="inline">
+            <Switch
+              checked={c.strength_weibull_shape == null}
+              label="Auto"
+              onChange={(auto) =>
+                set({ strength_weibull_shape: auto ? null : Number(sig(rupture?.weibull_shape ?? 20, 3)) }, 'wbl')
+              }
+            />
+            <NumberInput
+              ariaLabel="Strength Weibull shape"
+              value={c.strength_weibull_shape ?? rupture?.weibull_shape ?? null}
+              disabled={c.strength_weibull_shape == null}
+              gt={1}
+              step={1}
+              onCommit={(v) => set({ strength_weibull_shape: v }, 'wblv')}
+            />
+          </div>
+        </Field>
+        <Field
+          label="Rupture exponent"
+          hint={
+            c.rupture_exponent == null
+              ? `Stress-rupture power-law exponent: calibrated to the ISO 11119 / 11439 stress ratios${rupture ? ` (${sig(rupture.exponent, 3)})` : ''}`
+              : 'Stress-rupture power-law exponent (user override)'
+          }
+        >
+          <div className="inline">
+            <Switch
+              checked={c.rupture_exponent == null}
+              label="Auto"
+              onChange={(auto) =>
+                set({ rupture_exponent: auto ? null : Number(sig(rupture?.exponent ?? 30, 3)) }, 'rexp')
+              }
+            />
+            <NumberInput
+              ariaLabel="Rupture exponent"
+              value={c.rupture_exponent ?? rupture?.exponent ?? null}
+              disabled={c.rupture_exponent == null}
+              gt={1}
+              step={1}
+              onCommit={(v) => set({ rupture_exponent: v }, 'rexpv')}
+            />
+          </div>
+        </Field>
         {fiber && resin ? (
           <div className="card subtle">
             <div className="card-title">Derived ply (rule of mixtures)</div>
@@ -383,6 +476,7 @@ function MaterialEditor() {
   );
   const setD = (patch: Rec) => editorStore.set({ ...ed, draft: { ...ed.draft, ...patch } });
   const liner = ed.kind === 'liners';
+  const polymer = liner && d.kind === 'polymer';
   const ultBelowYield = liner && Number(d.ultimate) < Number(d.yield);
   const usage = ed.originalId ? materialUsage(project, ed.kind, ed.originalId) : [];
   const renamed = !!ed.originalId && ed.originalId !== id;
@@ -456,7 +550,23 @@ function MaterialEditor() {
             />
           </Field>
         ) : null}
-        {meta.fields.map((f) => {
+        {liner ? (
+          <SelectField<LinerKind>
+            label="Liner type"
+            value={polymer ? 'polymer' : 'metal'}
+            options={[
+              { value: 'metal', label: 'Metal (Type III)' },
+              { value: 'polymer', label: 'Polymer (Type IV)' },
+            ]}
+            hint={
+              polymer
+                ? 'No autofrettage; liner strain, cure / service temperature and H₂ permeation checks'
+                : 'Autofrettage, liner fatigue and leak-before-burst checks'
+            }
+            onChange={(v) => setD({ kind: v })}
+          />
+        ) : null}
+        {[...meta.fields, ...(polymer ? POLYMER_LINER_FIELDS : [])].map((f) => {
           const sc = f.scale ?? 1;
           const v = d[f.key];
           return (
@@ -591,6 +701,7 @@ function LibraryTable({ kind }: { kind: MatKind }) {
                   <td>
                     <div className="lib-name">
                       <span>{e.rec.name}</span>
+                      {kind === 'liners' && e.rec.kind === 'polymer' ? <LinerTypeBadge polymer /> : null}
                       {e.custom ? <span className="type-badge t-custom">custom</span> : null}
                       {e.shadowed ? (
                         <span className="type-badge t-muted" title="A custom record with this id takes precedence">

@@ -176,6 +176,12 @@ export function Viewport() {
     viewer.current?.setPath(simMode ? ui.path : null, layerColor, coloring?.colors ?? null);
   }, [ui.path, simMode, layerColor, coloring]);
 
+  // Continuous-winding transition paths (Machine step, once planned).
+  const transitions = ui.step === 'machine' ? (ui.continuousPlan?.result.transitions ?? null) : null;
+  useEffect(() => {
+    viewer.current?.setTransitions(transitions?.map((t) => ({ points: t.points, feasible: t.feasible })) ?? null);
+  }, [transitions]);
+
   useEffect(() => {
     viewer.current?.setSimulation(simMode ? ui.sim : null, project.machine);
     if (simMode && ui.sim) viewer.current?.fit();

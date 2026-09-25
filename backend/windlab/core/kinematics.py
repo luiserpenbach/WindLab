@@ -46,7 +46,8 @@ class Motion:
         return float(self.t[-1]) if len(self.t) else 0.0
 
 
-def layer_path(b: Build, bl: BuiltLayer, samples: int | None = None) -> PathPoints:
+def layer_path(b: Build, bl: BuiltLayer, samples: int | None = None, reverse: bool = False) -> PathPoints:
+    """Fibre path of a layer; ``reverse`` starts a hoop layer at end B (continuous winding)."""
     m = b.project.machine
     if bl.spec.type == "helical":
         assert bl.gp is not None and bl.pattern is not None
@@ -56,7 +57,7 @@ def layer_path(b: Build, bl: BuiltLayer, samples: int | None = None) -> PathPoin
     else:
         kw = {"samples_per_rev": samples} if samples else {}
         path = hoop_layer_path(bl.base, bl.z_start, bl.z_end, bl.spec.band_width, bl.spec.passes, pitch=bl.pitch,
-                               **kw)
+                               reverse=reverse, **kw)
     path.phi = path.phi + math.radians(bl.spec.start_angle)  # pattern clocking
     return _dedupe(path)
 
@@ -235,7 +236,11 @@ def simulate_layer(b: Build, bl: BuiltLayer) -> Motion:
     """Machine motion for a layer, adaptively refined so that no G-code segment rotates the mandrel more
     than MAX_STEP_DEG or moves the carriage more than MAX_STEP_MM (linear interpolation between samples
     must not pull the fibre off its path)."""
-    path = layer_path(b, bl)
+    return simulate_path(b, bl, layer_path(b, bl))
+
+
+def simulate_path(b: Build, bl: BuiltLayer, path: PathPoints) -> Motion:
+    """Machine motion for any fibre path lying on ``bl.base`` (a layer or a continuous-winding transition)."""
     mo = _simulate(b, bl, path)
     for _ in range(3):
         k = np.maximum.reduce([np.ceil(np.abs(np.diff(mo.a)) / MAX_STEP_DEG),

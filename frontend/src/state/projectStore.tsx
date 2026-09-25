@@ -162,7 +162,7 @@ export function useProject(): ProjectStore {
 }
 
 /** Typed helpers for patching one section of the project. */
-export function patchSection<K extends 'liner' | 'requirements' | 'composite' | 'machine'>(
+export function patchSection<K extends 'liner' | 'requirements' | 'composite' | 'machine' | 'continuous'>(
   section: K,
   patch: Partial<Project[K]>,
 ): (p: Project) => Project {

@@ -50,6 +50,15 @@ class Requirements(BaseModel):
         0.6, gt=0, le=1, description="Max fibre stress at MEOP / fibre strength (stress rupture)"
     )
     design_cycles: int = Field(1000, ge=1, description="Required MEOP pressure cycles")
+    service_life: float = Field(15.0, gt=0, description="Service life for stress-rupture reliability [years]")
+    time_at_meop: float = Field(
+        1.0, gt=0, le=1, description="Fraction of the service life spent at MEOP (stress rupture; rest unpressurised)")
+    rupture_pf_target: float = Field(
+        1e-6, gt=0, lt=0.5, description="Allowed stress-rupture failure probability over the service life")
+    hold_time: float = Field(60.0, ge=0, description="Hold time at the autofrettage and proof pressures [s]")
+    permeation_limit: float = Field(
+        46.0, gt=0, description="Type IV: allowed H2 permeation at MEOP and permeation_temperature [NmL/h per L]")
+    permeation_temperature: float = Field(55.0, description="Type IV permeation test temperature [degC]")
     fatigue_scatter_factor: float = Field(4.0, ge=1, description="Liner fatigue life scatter factor")
     temperature_min: float = Field(-40.0, description="Minimum operating temperature [degC]")
     temperature_max: float = Field(65.0, description="Maximum operating temperature [degC]")
@@ -99,6 +108,11 @@ class CustomLiner(BaseModel):
     fatigue_exp: float = Field(..., lt=0, description="Basquin exponent b")
     cte: float = Field(23.6e-6, description="CTE [1/K]")
     k_ic: float = Field(29.0, gt=0, description="Fracture toughness [MPa sqrt(m)]")
+    kind: Literal["metal", "polymer"] = Field("metal", description="metal: Type III; polymer: Type IV liner")
+    max_temp: float = Field(150.0, description="Highest service / processing temperature [degC]")
+    strain_limit: float = Field(0.0, ge=0, description="Polymer: allowable liner strain at proof [-]")
+    h2_permeability: float = Field(0.0, ge=0, description="H2 permeability at 20 degC [Barrer]")
+    perm_activation: float = Field(0.0, ge=0, description="Permeability activation energy [kJ/mol]")
 
     model_config = {"populate_by_name": True}
 
@@ -121,6 +135,10 @@ class CompositeSpec(BaseModel):
     cure_temperature: float = Field(
         120.0, description="Stress-free temperature of the liner/composite bond (cure) [degC]"
     )
+    strength_weibull_shape: Optional[float] = Field(
+        None, gt=1, description="Weibull shape of the vessel burst strength; null = fibre-family default")
+    rupture_exponent: Optional[float] = Field(
+        None, gt=1, description="Stress-rupture power-law exponent; null = calibrated to the standards' stress ratios")
 
 
 class PatternChoice(BaseModel):
@@ -207,6 +225,18 @@ class MachineSpec(BaseModel):
     pause_between_layers: bool = True
 
 
+class ContinuousSpec(BaseModel):
+    """Continuous winding: the roving is not cut between layers; WindLab plans transition paths."""
+
+    enabled: bool = Field(False, description="Wind all layers without cutting the roving")
+    max_angle_step: float = Field(
+        7.0, gt=0.5, le=45.0,
+        description="Largest change of cylinder winding angle across one turnaround [deg]; larger changes get "
+                    "transition passes at intermediate angles")
+    slippage_margin: float = Field(
+        0.8, gt=0.1, le=1.0, description="Fraction of the layer friction usable by transition paths")
+
+
 class TestRecord(BaseModel):
     id: str
     serial: str = ""
@@ -230,6 +260,7 @@ class Project(BaseModel):
     materials: MaterialLibrary = MaterialLibrary()
     layers: list[Layer] = []
     machine: MachineSpec = MachineSpec()
+    continuous: ContinuousSpec = ContinuousSpec()
     tests: list[TestRecord] = []
 
 
@@ -312,6 +343,32 @@ class LoadPoint(BaseModel):
     strain_hoop: float
 
 
+class RuptureGroup(BaseModel):
+    group: str  # "hoop" | "helical"
+    ratio_meop: float
+    ratio_autofrettage: float
+    ratio_proof: float
+    pf: float  # service failure probability, conditional on surviving autofrettage + proof
+    pf_no_proof_credit: float
+    life_years: float  # service years until pf reaches the target
+    allowed_ratio: float  # highest MEOP stress ratio meeting the target over the service life
+
+
+class RuptureResult(BaseModel):
+    family: str
+    weibull_shape: float
+    exponent: float
+    alpha: float
+    calibrated: bool
+    groups: list[RuptureGroup]
+    pf: float
+    reliability: float
+    target: float
+    service_life: float
+    curve_years: list[float]
+    curve_pf: list[float]
+
+
 class StructuralResult(BaseModel):
     autofrettage_pressure: float
     autofrettage_auto: bool
@@ -338,6 +395,7 @@ class StructuralResult(BaseModel):
     netting_hoop_thickness: float
     netting_helical_thickness: float
     dome_fiber_stress: Curve = Field(..., description="Netting fibre stress at MEOP along z")
+    rupture: Optional[RuptureResult] = Field(None, description="Stress-rupture reliability over the service life")
 
 
 class FEResult(BaseModel):
@@ -524,6 +582,33 @@ class ProgressiveResultOut(BaseModel):
     ff_fraction: list[list[float]] = Field(..., description="Per layer: fraction of points with fibre failure")
     iff_fraction: list[list[float]] = Field(..., description="Per layer: fraction of points with matrix cracks")
     liner_peeq: list[float] = Field(..., description="Liner equivalent plastic strain at burst")
+    notes: list[str] = []
+
+
+class TransitionOut(BaseModel):
+    from_layer: str
+    to_layer: str
+    kind: str  # "direct" | "passes" | "hoop"
+    angle_from: float  # deg
+    angle_to: float
+    passes: int
+    angles: list[float]  # cylinder angle of each transition pass [deg]
+    max_slippage: float
+    friction_limit: float
+    fibre_length: float  # mm
+    fibre_mass: float  # g
+    dwell: float  # phase-matching dwell [deg]
+    feasible: bool
+    notes: list[str] = []
+    points: list[list[float]] = []  # downsampled 3D path (part frame)
+
+
+class ContinuousResult(BaseModel):
+    transitions: list[TransitionOut]
+    total_passes: int
+    fibre_length: float
+    fibre_mass: float
+    feasible: bool
     notes: list[str] = []
 
 

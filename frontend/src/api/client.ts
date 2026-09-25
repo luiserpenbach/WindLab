@@ -2,6 +2,7 @@ import type {
   AnalysisResult,
   CalibrationResult,
   CcxExportResponse,
+  ContinuousResult,
   FeaExportResponse,
   OptimiseResult,
   ReportResponse,
@@ -13,6 +14,7 @@ import type {
   MaterialsResponse,
   OkResponse,
   PathResult,
+  ProgressiveResult,
   Project,
   ProjectListEntry,
   SimulationResult,
@@ -124,7 +126,8 @@ export const api = {
   machines: (s?: AbortSignal) => request<MachinePreset[]>('GET', '/machines', undefined, s),
   examples: (s?: AbortSignal) => request<ExampleProject[]>('GET', '/examples', undefined, s),
   analyze: (p: Project, s?: AbortSignal) => request<AnalysisResult>('POST', '/analyze', p, s),
-  suggestLayup: (p: Project, s?: AbortSignal) => request<SuggestLayupResponse>('POST', '/suggest-layup', p, s),
+  suggestLayup: (p: Project, s?: AbortSignal, progressive = false) =>
+    request<SuggestLayupResponse>('POST', `/suggest-layup${progressive ? '?progressive=true' : ''}`, p, s),
   path: (r: LayerRequest, s?: AbortSignal) => request<PathResult>('POST', '/path', r, s),
   simulate: (r: LayerRequest, s?: AbortSignal) => request<SimulationResult>('POST', '/simulate', r, s),
   thicknessMap: (r: ThicknessMapRequest, s?: AbortSignal) =>
@@ -136,6 +139,9 @@ export const api = {
   traveller: (p: Project, s?: AbortSignal) => request<TravellerResponse>('POST', '/traveller', p, s),
   optimise: (project: Project, time_budget: number, s?: AbortSignal) =>
     request<OptimiseResult>('POST', '/optimise', { project, time_budget }, s),
+  progressive: (project: Project, mesh = 4.0, s?: AbortSignal) =>
+    request<ProgressiveResult>('POST', '/progressive', { project, mesh }, s),
+  continuous: (p: Project, s?: AbortSignal) => request<ContinuousResult>('POST', '/continuous', p, s),
   calibrate: (p: Project, s?: AbortSignal) => request<CalibrationResult>('POST', '/calibrate', p, s),
   report: (p: Project, s?: AbortSignal) => request<ReportResponse>('POST', '/report', p, s),
   feaExport: (p: Project, s?: AbortSignal) => request<FeaExportResponse>('POST', '/fea-export', p, s),

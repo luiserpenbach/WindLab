@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { PathResult, SimulationResult, ThicknessMapResult } from '../api/types';
+import type { ContinuousResult, PathResult, Project, SimulationResult, ThicknessMapResult } from '../api/types';
 import type { PathColorMode } from '../viewer/colormaps';
 
 export type StepId =
@@ -72,6 +72,9 @@ interface UiState {
   setThk: (t: ThicknessMapResult | null) => void;
   overlay: OverlayOptions;
   setOverlay: (patch: Partial<OverlayOptions>) => void;
+  /** Last continuous-winding transition plan (Machine step) and the project it was planned for. */
+  continuousPlan: { result: ContinuousResult; project: Project } | null;
+  setContinuousPlan: (p: { result: ContinuousResult; project: Project } | null) => void;
 }
 
 const Ctx = createContext<UiState | null>(null);
@@ -118,6 +121,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
     readLS('windlab.pathColor', ['layer', 'alpha', 'slip'] as const, 'layer'),
   );
   const [thk, setThk] = useState<ThicknessMapResult | null>(null);
+  const [continuousPlan, setContinuousPlan] = useState<UiState['continuousPlan']>(null);
   const [overlay, setOverlayState] = useState<OverlayOptions>(() => ({
     thk3d: true,
     thkScale: readLS('windlab.thkScale', ['nominal', 'robust', 'full'] as const, 'nominal'),
@@ -193,6 +197,8 @@ export function UiProvider({ children }: { children: ReactNode }) {
       setThk,
       overlay,
       setOverlay,
+      continuousPlan,
+      setContinuousPlan,
     }),
     [
       step,
@@ -212,6 +218,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
       thk,
       overlay,
       setOverlay,
+      continuousPlan,
     ],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

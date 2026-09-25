@@ -1,15 +1,27 @@
-import { useMemo, useState } from 'react';
-import type { FEResult, LinerSpec, LoadPoint, Status, StructuralResult } from '../api/types';
-import { Field, Section, Segmented, SliderField, Switch } from '../components/fields';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { api, errorMessage, isAbort } from '../api/client';
+import type {
+  FailureEventKind,
+  FEResult,
+  LinerSpec,
+  LoadPoint,
+  ProgressiveResult,
+  Project,
+  RuptureResult,
+  Status,
+  StructuralResult,
+} from '../api/types';
+import { Field, NumberField, Section, Segmented, SliderField, Switch } from '../components/fields';
 import { LineChart, type Band, type RefLine, type Series } from '../components/LineChart';
-import { Empty, Kpi, Meter, Spinner } from '../components/ui';
+import { Banner, Button, Empty, Kpi, Meter, Progress, Spinner, StatusPill } from '../components/ui';
 import { useAnalysis } from '../state/analysis';
+import { usePolymerLiner } from '../state/materials';
 import { useProject } from '../state/projectStore';
 import { useUi, type FeOverlay } from '../state/uiStore';
 import { layerColors } from '../viewer/colors';
 import { fmtCycles, fmtMass, sig } from '../util/format';
 import { ThicknessChart } from './LayupStep';
-import { ChecksList } from './shared';
+import { ChecksList, NO_AUTOFRETTAGE_NOTE } from './shared';
 import { PressureTargets } from './PressureTargets';
 import { feValidMask } from '../state/fe';
 
@@ -23,6 +35,7 @@ function ratioStatus(v: number, limit: number, higherIsBetter: boolean): Status 
 export function AnalysisPanel() {
   const { result, loading } = useAnalysis();
   const { project } = useProject();
+  const polymer = usePolymerLiner();
   if (!result)
     return (
       <Empty>
@@ -133,25 +146,36 @@ export function AnalysisPanel() {
               </>
             }
           />
-          <Kpi
-            label="Autofrettage"
-            value={sig(st.autofrettage_pressure, 4)}
-            unit="MPa"
-            status={
-              st.autofrettage_pressure >= st.autofrettage_window[0] &&
-              st.autofrettage_pressure <= st.autofrettage_window[1]
-                ? 'ok'
-                : 'warn'
-            }
-            sub={`${st.autofrettage_auto ? 'auto' : 'manual'} · window ${sig(st.autofrettage_window[0], 4)} – ${sig(st.autofrettage_window[1], 4)}`}
-          />
-          <Kpi
-            label="Liner fatigue"
-            value={fmtCycles(st.liner_fatigue_cycles)}
-            unit="cycles"
-            status={ratioStatus(st.liner_fatigue_cycles, reqCycles, true)}
-            sub={`required ${fmtCycles(reqCycles)} (${req.design_cycles} × ${req.fatigue_scatter_factor})`}
-          />
+          {polymer ? (
+            <Kpi
+              label="Autofrettage"
+              value="None"
+              title={NO_AUTOFRETTAGE_NOTE}
+              sub="Type IV: first load is the proof test"
+            />
+          ) : (
+            <>
+              <Kpi
+                label="Autofrettage"
+                value={sig(st.autofrettage_pressure, 4)}
+                unit="MPa"
+                status={
+                  st.autofrettage_pressure >= st.autofrettage_window[0] &&
+                  st.autofrettage_pressure <= st.autofrettage_window[1]
+                    ? 'ok'
+                    : 'warn'
+                }
+                sub={`${st.autofrettage_auto ? 'auto' : 'manual'} · window ${sig(st.autofrettage_window[0], 4)} – ${sig(st.autofrettage_window[1], 4)}`}
+              />
+              <Kpi
+                label="Liner fatigue"
+                value={fmtCycles(st.liner_fatigue_cycles)}
+                unit="cycles"
+                status={ratioStatus(st.liner_fatigue_cycles, reqCycles, true)}
+                sub={`required ${fmtCycles(reqCycles)} (${req.design_cycles} × ${req.fatigue_scatter_factor})`}
+              />
+            </>
+          )}
           <Kpi
             label="Mass"
             value={fmtMass(m.total)}
@@ -171,10 +195,97 @@ export function AnalysisPanel() {
       )}
       {!st ? <p className="muted small">No structural result (add helical and hoop layers).</p> : null}
       {fe ? <FeViewControls fe={fe} radius={liner.radius} /> : null}
-      {st ? <LoadTable st={st} temps={req} /> : null}
+      {st?.rupture ? <RuptureSection r={st.rupture} polymer={polymer} /> : null}
+      {st ? <LoadTable st={st} temps={req} polymer={polymer} /> : null}
       {st ? <PressureTargets /> : null}
+      <ProgressiveSection />
       <ChecksList checks={result.checks} title="All checks" />
     </>
+  );
+}
+
+/** Failure probability in compact scientific notation. */
+function fmtPf(v: number): string {
+  if (!Number.isFinite(v)) return '–';
+  if (v <= 0) return '0';
+  return v >= 0.01 ? sig(v, 3) : v.toExponential(1);
+}
+
+function fmtLife(y: number): string {
+  return y > 1e6 ? '> 1e6' : sig(y, 3);
+}
+
+function RuptureSection({ r, polymer }: { r: RuptureResult; polymer: boolean }) {
+  const pass = r.pf <= r.target;
+  return (
+    <Section title="Stress-rupture reliability">
+      <div className="kpi-grid">
+        <Kpi
+          label="Rupture Pf"
+          value={fmtPf(r.pf)}
+          status={pass ? 'ok' : 'fail'}
+          title={`Probability of stress-rupture failure over the service life, given the vessel survived ${polymer ? 'the proof test' : 'autofrettage and proof'}`}
+          sub={
+            <>
+              <StatusPill status={pass ? 'ok' : 'fail'}>{pass ? 'Pass' : 'Fail'}</StatusPill> target {fmtPf(r.target)}{' '}
+              over {sig(r.service_life, 3)} y
+            </>
+          }
+        />
+        <Kpi label="Reliability" value={sig(r.reliability, 9)} sub={`1 − Pf · ${r.family}`} />
+      </div>
+      <div className="table-scroll">
+        <table className="data-table compact">
+          <caption>Fibre groups</caption>
+          <thead>
+            <tr>
+              <th>Group</th>
+              <th className="num" title="Fibre stress ratio at MEOP">
+                σ/σu
+              </th>
+              <th className="num" title="Highest MEOP stress ratio that meets the target over the service life">
+                allowed
+              </th>
+              <th className="num" title="Stress ratio at autofrettage / proof">
+                AF / proof
+              </th>
+              <th className="num" title="Service failure probability (with proof-test credit)">
+                Pf
+              </th>
+              <th className="num" title="Pf without credit for surviving autofrettage and proof">
+                no credit
+              </th>
+              <th className="num" title="Service years until Pf reaches the target">
+                life y
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {r.groups.map((g) => (
+              <tr key={g.group}>
+                <td>{g.group}</td>
+                <td className={`num ${g.ratio_meop > g.allowed_ratio ? 'bad' : ''}`}>{sig(g.ratio_meop, 3)}</td>
+                <td className="num">{sig(g.allowed_ratio, 3)}</td>
+                <td className="num">
+                  {sig(g.ratio_autofrettage, 3)} / {sig(g.ratio_proof, 3)}
+                </td>
+                <td className={`num ${g.pf > r.target ? 'bad' : ''}`}>{fmtPf(g.pf)}</td>
+                <td className="num">{fmtPf(g.pf_no_proof_credit)}</td>
+                <td className="num">{fmtLife(g.life_years)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="muted small">
+        Weibull power-law breakdown model with credit for surviving{' '}
+        {polymer ? 'the proof test' : 'autofrettage and proof'}; shape {sig(r.weibull_shape, 3)}, exponent{' '}
+        {sig(r.exponent, 3)}
+        {r.calibrated ? ' (calibrated to the ISO 11119 / 11439 stress ratios)' : ' (user override)'}. Pf vs time is
+        plotted below the 3D view.
+        {polymer ? ` ${NO_AUTOFRETTAGE_NOTE}` : null}
+      </p>
+    </Section>
   );
 }
 
@@ -248,18 +359,26 @@ function FeViewControls({ fe, radius }: { fe: FEResult; radius: number }) {
 function LoadTable({
   st,
   temps,
+  polymer,
 }: {
   st: StructuralResult;
   temps: { temperature_min: number; temperature_max: number; temperature_ref: number };
+  polymer: boolean;
 }) {
   const t = (v: number) => `${sig(v, 3)} °C`;
   const rows: [string, LoadPoint | null, string][] = [
     [
       'After cure',
       st.cure_residual,
-      `Cool-down from the stress-free temperature to ${t(temps.temperature_ref)}, before autofrettage`,
+      `Cool-down from the stress-free temperature to ${t(temps.temperature_ref)}, before ${polymer ? 'the proof test' : 'autofrettage'}`,
     ],
-    ['Residual (0)', st.residual, `After autofrettage, at 0 MPa and ${t(temps.temperature_ref)}`],
+    [
+      'Residual (0)',
+      st.residual,
+      polymer
+        ? `After the proof test (Type IV: no autofrettage), at 0 MPa and ${t(temps.temperature_ref)}`
+        : `After autofrettage, at 0 MPa and ${t(temps.temperature_ref)}`,
+    ],
     ['MEOP cold', st.meop_cold, `MEOP at ${t(temps.temperature_min)}`],
     ['MEOP', st.at_meop, `MEOP at ${t(temps.temperature_ref)}`],
     ['MEOP hot', st.meop_hot, `MEOP at ${t(temps.temperature_max)}`],
@@ -399,6 +518,54 @@ export function DomeStressChart({ height = 250 }: { height?: number }) {
       yZero
       height={height}
       emptyText="No structural result"
+    />
+  );
+}
+
+/** Stress-rupture Pf vs service time; LineChart has no log axes, so both are plotted as log10. */
+export function RuptureChart({ height = 250 }: { height?: number }) {
+  const { result } = useAnalysis();
+  const r = result?.structural?.rupture ?? null;
+  const view = useMemo(() => {
+    if (!r) return null;
+    const x: number[] = [];
+    const y: number[] = [];
+    r.curve_years.forEach((t, i) => {
+      const pf = r.curve_pf[i];
+      if (t > 0 && pf > 0) {
+        x.push(Math.log10(t));
+        y.push(Math.log10(pf));
+      }
+    });
+    const series: Series[] = [{ id: 'pf', name: 'Pf', x, y, color: 'var(--series-1)' }];
+    const hlines: RefLine[] =
+      r.target > 0
+        ? [{ value: Math.log10(r.target), label: `target ${fmtPf(r.target)}`, color: 'var(--status-critical)' }]
+        : [];
+    const vlines: RefLine[] =
+      r.service_life > 0
+        ? [
+            {
+              value: Math.log10(r.service_life),
+              label: `service life ${sig(r.service_life, 3)} y`,
+              color: 'var(--axis)',
+            },
+          ]
+        : [];
+    return { series, hlines, vlines };
+  }, [r]);
+  return (
+    <LineChart
+      title="Stress-rupture failure probability"
+      series={view?.series ?? []}
+      hlines={view?.hlines}
+      vlines={view?.vlines}
+      xLabel="log₁₀ time"
+      xUnit="years"
+      yLabel="log₁₀ Pf"
+      xFormat={(x) => `${sig(Math.pow(10, x), 3)} y`}
+      height={height}
+      emptyText="No stress-rupture result"
     />
   );
 }
@@ -599,8 +766,351 @@ export function LinerStressChart({ height = 250 }: { height?: number }) {
   );
 }
 
+// ------------------------------------------------------------------ progressive failure
+/**
+ * Progressive failure run (POST /api/progressive). Slow (10 s to minutes), so it
+ * only runs on request; the result lives in a module store so it survives step
+ * changes and is shared between the panel and the charts below the viewport.
+ */
+interface ProgState {
+  result: ProgressiveResult | null;
+  /** Project the result was computed for */
+  resultFor: Project | null;
+  /** performance.now() at the start of the running request */
+  started: number | null;
+  error: string | null;
+  mesh: number;
+}
+let prog: ProgState = { result: null, resultFor: null, started: null, error: null, mesh: 4 };
+let progCtrl: AbortController | null = null;
+const progListeners = new Set<() => void>();
+const progStore = {
+  get: () => prog,
+  set(p: Partial<ProgState>) {
+    prog = { ...prog, ...p };
+    progListeners.forEach((l) => l());
+  },
+  subscribe(l: () => void) {
+    progListeners.add(l);
+    return () => progListeners.delete(l);
+  },
+};
+const useProgressive = () => useSyncExternalStore(progStore.subscribe, progStore.get, progStore.get);
+
+async function runProgressive(project: Project) {
+  progCtrl?.abort();
+  const c = new AbortController();
+  progCtrl = c;
+  progStore.set({ started: performance.now(), error: null });
+  try {
+    const r = await api.progressive(project, prog.mesh, c.signal);
+    if (!c.signal.aborted) progStore.set({ result: r, resultFor: project });
+  } catch (e) {
+    if (!isAbort(e)) progStore.set({ error: errorMessage(e) });
+  } finally {
+    if (progCtrl === c) {
+      progCtrl = null;
+      progStore.set({ started: null });
+    }
+  }
+}
+
+function cancelProgressive() {
+  progCtrl?.abort();
+  progCtrl = null;
+  progStore.set({ started: null });
+}
+
+const EVENT_KIND: Record<FailureEventKind, string> = {
+  iff: 'matrix cracking',
+  ff: 'fibre failure',
+  liner_yield: 'liner yield',
+  liner_rupture: 'liner rupture',
+  burst: 'burst',
+};
+
+function ProgressiveSection() {
+  const { project } = useProject();
+  const { result: r, resultFor, started, error, mesh } = useProgressive();
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (started == null) return;
+    setElapsed(0);
+    const h = window.setInterval(() => setElapsed((performance.now() - started) / 1000), 100);
+    return () => window.clearInterval(h);
+  }, [started]);
+  const busy = started != null;
+  const stale = !!r && resultFor !== project;
+  const pass = r ? r.burst_pressure >= r.required_burst : false;
+  const p = (v: number | null) => (v == null ? '–' : sig(v, 4));
+  return (
+    <Section title="Progressive failure">
+      <p className="muted small">
+        Nonlinear shell analysis with liner plasticity, Puck matrix cracking (IFF) and fibre failure, ramped to burst.
+        Takes 10 s to a few minutes.
+      </p>
+      <NumberField
+        label="Mesh"
+        unit="mm"
+        value={mesh}
+        min={1}
+        max={20}
+        step={0.5}
+        hint="Max element length along the meridian"
+        onCommit={(v) => progStore.set({ mesh: v })}
+      />
+      {busy ? (
+        <Progress label="Running progressive failure analysis…" elapsed={elapsed} onCancel={cancelProgressive} />
+      ) : (
+        <Button
+          size="sm"
+          icon="play"
+          variant={!r || stale ? 'primary' : 'default'}
+          onClick={() => void runProgressive(project)}
+        >
+          {r ? (stale ? 'Re-run (project changed)' : 'Re-run progressive analysis') : 'Run progressive analysis'}
+        </Button>
+      )}
+      {error ? <Banner kind="fail">{error}</Banner> : null}
+      {r ? (
+        <>
+          {stale ? <p className="muted small stale-note">Computed for an earlier version of the project.</p> : null}
+          <div className="kpi-grid">
+            <Kpi
+              label="Progressive burst"
+              value={sig(r.burst_pressure, 4)}
+              unit="MPa"
+              status={ratioStatus(r.burst_pressure, r.required_burst, true)}
+              sub={
+                <>
+                  <Meter value={r.burst_pressure} limit={r.required_burst} invert />
+                  <StatusPill status={pass ? 'ok' : 'fail'}>{pass ? 'Pass' : 'Fail'}</StatusPill> req.{' '}
+                  {sig(r.required_burst, 4)} MPa
+                </>
+              }
+            />
+            <Kpi
+              label="Burst location"
+              value={<span className="kpi-text">{r.burst_zone}</span>}
+              sub={`layer ${r.burst_layer ?? '–'}${r.burst_z != null ? ` · z ${sig(r.burst_z, 4)} mm` : ''}`}
+            />
+            <Kpi
+              label="First matrix crack"
+              value={p(r.first_iff_pressure)}
+              unit={r.first_iff_pressure == null ? undefined : 'MPa'}
+              title="First inter-fibre failure (Puck IFF)"
+              sub={r.first_iff_pressure == null ? 'none before burst' : 'IFF'}
+            />
+            <Kpi
+              label="First fibre failure"
+              value={p(r.first_ff_pressure)}
+              unit={r.first_ff_pressure == null ? undefined : 'MPa'}
+            />
+            <Kpi
+              label="Liner yield"
+              value={p(r.liner_yield_pressure)}
+              unit={r.liner_yield_pressure == null ? undefined : 'MPa'}
+            />
+          </div>
+          <p className="muted small">Pressure–strain curve and damage along z are shown below the 3D view.</p>
+          {r.events.length ? (
+            <div className="table-scroll">
+              <table className="data-table compact">
+                <caption>Failure events</caption>
+                <thead>
+                  <tr>
+                    <th className="num" title="Pressure [MPa]">
+                      p
+                    </th>
+                    <th>Phase</th>
+                    <th>Kind</th>
+                    <th>Layer</th>
+                    <th className="num" title="Axial position [mm]">
+                      z
+                    </th>
+                    <th className="num" title="Number of such events in this phase for this layer">
+                      n
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {r.events.map((e, i) => (
+                    <tr key={i} className={e.kind === 'burst' ? 'row-strong' : undefined}>
+                      <td className="num">{sig(e.pressure, 4)}</td>
+                      <td>{e.phase}</td>
+                      <td>{EVENT_KIND[e.kind] ?? e.kind}</td>
+                      <td>{e.layer}</td>
+                      <td className="num">{sig(e.z, 4)}</td>
+                      <td className="num">{e.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          {r.notes.length ? (
+            <ul className="notes-list">
+              {r.notes.map((n, i) => (
+                <li key={i}>{n}</li>
+              ))}
+            </ul>
+          ) : null}
+        </>
+      ) : null}
+    </Section>
+  );
+}
+
+export function ProgressiveCurveChart({ height = 250 }: { height?: number }) {
+  const { result: r } = useProgressive();
+  const view = useMemo(() => {
+    if (!r) return null;
+    const series: Series[] = [
+      {
+        id: 'p',
+        name: 'Pressure',
+        x: r.curve_hoop_strain.map((e) => e * 100),
+        y: r.curve_pressure,
+        color: 'var(--series-1)',
+        markers: r.curve_pressure.length < 40,
+      },
+    ];
+    const hlines: RefLine[] = [
+      { value: r.required_burst, label: `required ${sig(r.required_burst, 4)}`, color: 'var(--status-critical)' },
+    ];
+    if (r.first_iff_pressure != null)
+      hlines.push({ value: r.first_iff_pressure, label: 'first IFF', color: 'var(--series-3)' });
+    if (r.first_ff_pressure != null)
+      hlines.push({ value: r.first_ff_pressure, label: 'first FF', color: 'var(--series-2)' });
+    if (r.liner_yield_pressure != null)
+      hlines.push({ value: r.liner_yield_pressure, label: 'liner yield', color: 'var(--series-7)' });
+    return { series, hlines };
+  }, [r]);
+  return (
+    <LineChart
+      title="Progressive · pressure vs hoop strain"
+      series={view?.series ?? []}
+      hlines={view?.hlines}
+      xLabel="Hoop strain (mid-cylinder)"
+      xUnit="%"
+      yLabel="Pressure"
+      yUnit="MPa"
+      yZero
+      hover="nearest"
+      height={height}
+      emptyText="Run the progressive failure analysis"
+    />
+  );
+}
+
+type DamageMode = 'max' | 'ff' | 'iff';
+
+/** Max over layers of a per-layer fraction at each z. */
+function maxOverLayers(per: number[][], n: number): number[] {
+  const out = new Array<number>(n).fill(0);
+  for (const row of per) row.forEach((v, i) => (out[i] = Math.max(out[i], Number.isFinite(v) ? v : 0)));
+  return out;
+}
+
+export function ProgressiveDamageChart({ height = 250 }: { height?: number }) {
+  const { result: r, resultFor } = useProgressive();
+  const { project } = useProject();
+  const [mode, setMode] = useState<DamageMode>('max');
+  const colors = useMemo(() => layerColors(project.layers), [project.layers]);
+  const view = useMemo(() => {
+    if (!r) return null;
+    const ids = (resultFor ?? project).layers.map((l) => l.id);
+    const pct = (a: number[]) => a.map((v) => v * 100);
+    let series: Series[];
+    if (mode === 'max') {
+      series = [
+        {
+          id: 'ff',
+          name: 'fibre failure',
+          x: r.z,
+          y: pct(maxOverLayers(r.ff_fraction, r.z.length)),
+          color: 'var(--series-2)',
+        },
+        {
+          id: 'iff',
+          name: 'matrix cracks',
+          x: r.z,
+          y: pct(maxOverLayers(r.iff_fraction, r.z.length)),
+          color: 'var(--series-3)',
+          dash: '5 3',
+        },
+      ];
+    } else {
+      const per = mode === 'ff' ? r.ff_fraction : r.iff_fraction;
+      series = per.map((y, k) => {
+        const id = ids[k] ?? `#${k + 1}`;
+        return {
+          id,
+          name: id,
+          x: r.z,
+          y: pct(y),
+          color: colors.get(id) ?? 'var(--series-1)',
+          width: 1.25,
+          hideLegend: per.length > 12,
+          noHover: per.length > 8,
+        };
+      });
+    }
+    const vlines: RefLine[] =
+      r.burst_z != null ? [{ value: r.burst_z, label: `burst: ${r.burst_zone}`, color: 'var(--status-critical)' }] : [];
+    return { series, vlines };
+  }, [r, resultFor, project, mode, colors]);
+  return (
+    <LineChart
+      title="Progressive · damage at burst"
+      series={view?.series ?? []}
+      vlines={view?.vlines}
+      xLabel="z"
+      xUnit="mm"
+      yLabel={mode === 'max' ? 'Max over layers' : mode === 'ff' ? 'Fibre failure' : 'Matrix cracks'}
+      yUnit="%"
+      yZero
+      height={height}
+      emptyText="Run the progressive failure analysis"
+      tools={
+        <Segmented<DamageMode>
+          size="sm"
+          ariaLabel="Damage series"
+          value={mode}
+          options={[
+            { value: 'max', label: 'Max' },
+            { value: 'ff', label: 'FF layers' },
+            { value: 'iff', label: 'IFF layers' },
+          ]}
+          onChange={setMode}
+        />
+      }
+    />
+  );
+}
+
+export function LinerPeeqChart({ height = 250 }: { height?: number }) {
+  const { result: r } = useProgressive();
+  return (
+    <LineChart
+      title="Progressive · liner plastic strain at burst"
+      series={
+        r ? [{ id: 'peeq', name: 'PEEQ', x: r.z, y: r.liner_peeq.map((v) => v * 100), color: 'var(--series-1)' }] : []
+      }
+      xLabel="z"
+      xUnit="mm"
+      yLabel="Equiv. plastic strain"
+      yUnit="%"
+      yZero
+      height={height}
+      emptyText="Run the progressive failure analysis"
+    />
+  );
+}
+
 export function AnalysisBottom() {
   const { result } = useAnalysis();
+  const { result: prog } = useProgressive();
   const hasFe = !!result?.fe;
   return (
     <div className="bottom-grid three">
@@ -609,6 +1119,10 @@ export function AnalysisBottom() {
       {hasFe ? <LinerStressChart /> : null}
       <DomeStressChart />
       <ThicknessChart height={250} initialMode="total" />
+      {result?.structural?.rupture ? <RuptureChart /> : null}
+      {prog ? <ProgressiveCurveChart /> : null}
+      {prog ? <ProgressiveDamageChart /> : null}
+      {prog ? <LinerPeeqChart /> : null}
     </div>
   );
 }

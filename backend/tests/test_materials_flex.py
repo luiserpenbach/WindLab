@@ -14,8 +14,8 @@ def test_glass_outer_layer_changes_thickness_mass_and_stiffness(sized_project):
     Vf = sized_project.composite.fiber_volume_fraction
     assert g.band_thickness == pytest.approx(band_thickness(get_fiber("E-glass-2400"), 1, 6.0, Vf))
     assert g.fiber_mass > c.fiber_mass
-    # glass barely adds burst strength compared with carbon
-    assert rg.structural.burst_pressure < rc.structural.burst_pressure
+    # glass (E ~ 72 GPa) stiffens the vessel far less than carbon: more hoop strain at MEOP
+    assert rg.structural.at_meop.strain_hoop > rc.structural.at_meop.strain_hoop
 
 
 def test_custom_materials_take_precedence():

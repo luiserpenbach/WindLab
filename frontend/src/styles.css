@@ -2197,6 +2197,19 @@ td.bad {
   background: var(--surface-3);
   color: var(--muted);
 }
+.type-badge.t-type3,
+.type-badge.t-type4 {
+  text-transform: none;
+  white-space: nowrap;
+}
+.type-badge.t-type3 {
+  background: color-mix(in srgb, var(--series-2) 18%, transparent);
+  color: color-mix(in srgb, var(--series-2) 75%, var(--text));
+}
+.type-badge.t-type4 {
+  background: color-mix(in srgb, var(--series-5) 18%, transparent);
+  color: color-mix(in srgb, var(--series-5) 75%, var(--text));
+}
 .type-badge.t-use {
   background: var(--accent-soft);
   color: var(--accent-2);

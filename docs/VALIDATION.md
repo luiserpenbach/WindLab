@@ -57,6 +57,35 @@ Example (1 L desktop vessel, `grbl-10mpa-1l`), hoop strain at the cylinder mid-p
 | proof | 0.00589 | 0.00488 | 0.00480 |
 | MEOP | 0.00492 | 0.00401 | 0.00388 |
 
+## Stress rupture
+
+| Quantity | Reference | Agreement |
+|---|---|---|
+| Standard stress ratio (carbon 2.25, aramid 3.0, glass 3.5) over 15 years | P = 1e-6 (calibration) | 1e-6 relative |
+| Burst-test ramp to the median strength | P = 0.5; Weibull shape of the implied strength = beta | exact |
+| Life to target / allowed stress ratio | inverse of the failure probability | 1e-4 |
+
+## Type IV
+
+| Quantity | Reference | Agreement |
+|---|---|---|
+| H2 permeation vs liner thickness / temperature | Fick (1/t) and Arrhenius | exact |
+| Example `type4-35mpa-h2` (HDPE, NWP 35 MPa) | all blocking checks | pass; progressive burst >= 2.25 NWP |
+
+Permeability data (HDPE 1.3 Barrer, PA6 0.15 Barrer at 20 degC) are indicative literature values; use
+measured values for the actual liner grade.
+
+## Continuous winding
+
+| Quantity | Reference | Agreement |
+|---|---|---|
+| Cylinder angle ramp | non-geodesic equation da/dl = lam sin^2(a) / R | 0.2 % |
+| Angle step between consecutive passes / layers | `max_angle_step` | never exceeded |
+| Transition dome-leg slippage | friction x margin | never exceeded (else flagged infeasible) |
+| Path continuity across layers and transitions | no jump beyond one path step, azimuth monotonic | exact |
+| Helical layer pattern after a phase dwell | azimuth shift = multiple of 2 pi / n | 1e-6 |
+| Continuous G-code | interpreter time vs plan; no pauses between layers | 0.1 % |
+
 ## Machine motion and G-code
 
 | Quantity | Reference | Agreement |
@@ -78,7 +107,8 @@ The progressive model resolves effects the cylinder model cannot, and it changed
 
 ## Not validated (yet)
 
-- The Abaqus deck has not been run in Abaqus by the authors (conventions reviewed: SAX1 DOFs, normals, ply
+- The Abaqus deck has not been run in Abaqus (no licence available to the authors); the independent FE
+  check is the CalculiX axisymmetric solid comparison above. The Abaqus deck (conventions reviewed: SAX1 DOFs, normals, ply
   order, OFFSET, per-element pressure scaling).
 - Puck parameters and resin transverse strengths are generic carbon/epoxy values; progressive burst needs
   test calibration like every other prediction.

@@ -13,11 +13,13 @@ import { Field, Section, Segmented } from '../components/fields';
 import { Icon } from '../components/Icon';
 import { LineChart, type RefLine, type Series } from '../components/LineChart';
 import { Banner, Button, Empty, Kpi, Spinner, WarningList } from '../components/ui';
+import { usePolymerLiner } from '../state/materials';
 import { useProject } from '../state/projectStore';
 import { downloadText, fmtDuration, fmtTime, safeFilename, sig } from '../util/format';
 import { BackplotParser, chunks, type BackplotAxis, type BackplotResult } from '../util/gcodeBackplot';
 import type { BackplotMessage, BackplotRequest } from '../workers/backplot.worker';
 import { PressureTargets } from './PressureTargets';
+import { NO_AUTOFRETTAGE_NOTE } from './shared';
 
 // ------------------------------------------------------------------ local store shared by panel + bottom
 interface ExportState {
@@ -184,6 +186,7 @@ function runBackplot(r: GcodeResponse, machine: MachineSpec) {
 // ------------------------------------------------------------------ panel
 export function ExportPanel() {
   const { project } = useProject();
+  const polymer = usePolymerLiner();
   const s = useExport();
   const [mode, setMode] = useState<'all' | 'some'>('all');
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -281,6 +284,12 @@ export function ExportPanel() {
             }}
           />
         </Field>
+        {project.continuous.enabled ? (
+          <Banner kind="info">
+            Continuous winding is on: the transition paths between layers are included and pauses between layers are
+            skipped (settings in the Machine step).
+          </Banner>
+        ) : null}
         {mode === 'some' ? (
           <fieldset className="layer-picks">
             <legend className="sr-only">Layers to export</legend>
@@ -457,6 +466,7 @@ export function ExportPanel() {
           <strong>CalculiX:</strong> axisymmetric solid model (CAX8/CAX6, one element row per layer, liner plasticity)
           with cure cool-down, autofrettage, proof and MEOP steps. Open source; the WindLab test suite runs it against
           the cylinder model.
+          {polymer ? ` ${NO_AUTOFRETTAGE_NOTE}` : null}
         </p>
         <div className="toolbar">
           <Button icon="download" disabled={s.ccxBusy} onClick={genCcx}>

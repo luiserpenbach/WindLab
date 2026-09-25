@@ -7,6 +7,7 @@ import type {
   LayerResult,
   LayerType,
   PatternCandidate,
+  PatternDirection,
   SuggestLayupResponse,
   WindingType,
 } from '../api/types';
@@ -16,6 +17,7 @@ import {
   NumberInput,
   Section,
   Segmented,
+  Select,
   SelectField,
   Switch,
   TextInput,
@@ -100,7 +102,10 @@ export function LayupPanel() {
     busy: boolean;
     data: SuggestLayupResponse | null;
     error: string | null;
+    progressive: boolean;
   } | null>(null);
+  // also verify the suggestion with the (slow) progressive-failure analysis
+  const [suggestProg, setSuggestProg] = useState(false);
   const colors = layerColors(project.layers);
   const layers = project.layers;
 
@@ -147,12 +152,13 @@ export function LayupPanel() {
   };
 
   const runSuggest = async () => {
-    setSuggest({ busy: true, data: null, error: null });
+    const progressive = suggestProg;
+    setSuggest({ busy: true, data: null, error: null, progressive });
     try {
-      const data = await api.suggestLayup(project);
-      setSuggest({ busy: false, data, error: null });
+      const data = await api.suggestLayup(project, undefined, progressive);
+      setSuggest({ busy: false, data, error: null, progressive });
     } catch (e) {
-      setSuggest({ busy: false, data: null, error: errorMessage(e) });
+      setSuggest({ busy: false, data: null, error: errorMessage(e), progressive });
     }
   };
 
@@ -188,6 +194,13 @@ export function LayupPanel() {
           >
             Suggest layup
           </Button>
+          <label
+            className="check-row small"
+            title="Also verify (and if needed thicken) the suggestion with the progressive failure analysis. This can take several minutes."
+          >
+            <input type="checkbox" checked={suggestProg} onChange={(e) => setSuggestProg(e.target.checked)} />
+            verify with progressive failure
+          </label>
           <OptimiseButton />
         </div>
       </div>
@@ -401,7 +414,10 @@ export function LayupPanel() {
       >
         {suggest?.busy ? (
           <div className="empty">
-            <Spinner /> Computing a layup…
+            <Spinner />{' '}
+            {suggest.progressive
+              ? 'Computing a layup and verifying it with progressive failure (can take several minutes)…'
+              : 'Computing a layup…'}
           </div>
         ) : suggest?.error ? (
           <Banner kind="fail">{suggest.error}</Banner>
@@ -573,6 +589,7 @@ function LayerEditor({
               hint="Maximum mandrel dwell per turnaround"
               onCommit={(v) => onChange({ dwell_max: v }, 'dwell')}
             />
+            <PatternStyleField layer={l} result={r} onChange={onChange} />
           </>
         ) : (
           <>
@@ -695,6 +712,90 @@ function LayerFiberField({
       }
       onChange={(v) => onChange({ fiber: v || null }, 'fiber')}
     />
+  );
+}
+
+type PatternPreset = 'auto' | 'large' | 'medium' | 'fine' | 'custom';
+
+const PRESET_P: Record<Exclude<PatternPreset, 'auto' | 'custom'>, number> = { large: 1, medium: 3, fine: 8 };
+
+function presetOf(p: number | null): PatternPreset {
+  if (p == null) return 'auto';
+  if (p === 1) return 'large';
+  if (p === 3) return 'medium';
+  if (p === 8) return 'fine';
+  return 'custom';
+}
+
+/** Preferred pattern number / direction; the solver picks the closest closing pattern. */
+function PatternStyleField({
+  layer: l,
+  result: r,
+  onChange,
+}: {
+  layer: Layer;
+  result: LayerResult | null;
+  onChange: (patch: Partial<Layer>, key: string) => void;
+}) {
+  const preset = presetOf(l.pattern_number);
+  // a style is a preference for the auto-selection, so it drops an explicitly pinned pattern
+  const setStyle = (patch: Partial<Layer>, key: string) => onChange({ ...patch, pattern: null }, key);
+  const got = r?.pattern?.pattern_number;
+  return (
+    <Field
+      label="Pattern style"
+      hint={
+        <>
+          Pattern number p = diamonds (crossover zones) around the circumference. The solver picks the closest closing
+          pattern and warns if the requested one is unreachable.
+          {l.pattern
+            ? ' A pinned pattern (below) currently overrides the style.'
+            : l.pattern_number != null && got != null && got !== l.pattern_number
+              ? ` Closest reachable: p = ${got}.`
+              : ''}
+        </>
+      }
+    >
+      <div className="inline">
+        <Select<PatternPreset>
+          ariaLabel="Pattern style preset"
+          value={preset}
+          options={[
+            { value: 'auto', label: 'Auto' },
+            { value: 'large', label: 'Large diamonds (p=1)' },
+            { value: 'medium', label: 'Medium (p=3)' },
+            { value: 'fine', label: 'Fine mosaic (p≥8)' },
+            { value: 'custom', label: 'Custom p' },
+          ]}
+          onChange={(v) => {
+            if (v === 'auto') setStyle({ pattern_number: null }, 'pstyle');
+            else if (v === 'custom') setStyle({ pattern_number: l.pattern_number ?? got ?? 5 }, 'pstyle');
+            else setStyle({ pattern_number: PRESET_P[v] }, 'pstyle');
+          }}
+        />
+        <NumberInput
+          ariaLabel="Pattern number"
+          value={l.pattern_number}
+          placeholder="auto"
+          min={1}
+          max={60}
+          integer
+          unit="p"
+          onClear={() => setStyle({ pattern_number: null }, 'pnum')}
+          onCommit={(v) => setStyle({ pattern_number: v }, 'pnum')}
+        />
+        <Select<PatternDirection>
+          ariaLabel="Pattern direction"
+          value={l.pattern_direction}
+          options={[
+            { value: 'any', label: 'Any direction' },
+            { value: 'leading', label: 'Leading' },
+            { value: 'lagging', label: 'Lagging' },
+          ]}
+          onChange={(v) => setStyle({ pattern_direction: v }, 'pdir')}
+        />
+      </div>
+    </Field>
   );
 }
 

@@ -71,6 +71,14 @@ export type SurfaceOverlay =
   | { type: 'z'; z: number[]; values: (number | null)[]; color: (v: number) => Rgb }
   | { type: 'map'; map: ThicknessMapResult; color: (v: number) => Rgb };
 
+/** Continuous-winding transition path between two layers (points in the mandrel frame). */
+export interface TransitionPath {
+  points: number[][];
+  feasible: boolean;
+}
+
+const TRANSITION_COLOR = '#2a8cd6';
+
 /** Nodal displacements (shell FE) drawn magnified by `scale`. */
 export interface Deformation {
   z: number[];
@@ -313,6 +321,7 @@ export class VesselViewer {
   private mandrelGroup = new THREE.Group();
   private machineGroup = new THREE.Group();
   private pathGroup = new THREE.Group();
+  private transitionGroup = new THREE.Group();
   private grid: THREE.GridHelper | null = null;
   private gizmoScene = new THREE.Scene();
   private gizmoCamera = new THREE.OrthographicCamera(-1.6, 1.6, 1.6, -1.6, 0.1, 10);
@@ -372,7 +381,7 @@ export class VesselViewer {
     this.scene.add(rim);
 
     this.scene.add(this.staticGroup, this.mandrelGroup, this.machineGroup);
-    this.mandrelGroup.add(this.pathGroup);
+    this.mandrelGroup.add(this.pathGroup, this.transitionGroup);
 
     this.buildGizmo();
     this.ro = new ResizeObserver(() => this.resize());
@@ -473,6 +482,27 @@ export class VesselViewer {
       this.pathGroup.add(line);
     }
     this.colorLaidFibre();
+    this.applyClipping();
+    this.invalidate();
+  }
+
+  /** Show continuous-winding transition paths (infeasible ones in the fibre red). */
+  setTransitions(paths: TransitionPath[] | null) {
+    clearGroup(this.transitionGroup);
+    for (const t of paths ?? []) {
+      if (t.points.length < 2) continue;
+      const pos = new Float32Array(t.points.length * 3);
+      t.points.forEach((q, i) => this.lift(q, pos, i * 3, 0.3));
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      const m = new THREE.LineBasicMaterial({
+        color: t.feasible ? TRANSITION_COLOR : FIBRE_COLOR,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+      });
+      this.transitionGroup.add(new THREE.Line(g, m));
+    }
     this.applyClipping();
     this.invalidate();
   }
@@ -1117,6 +1147,7 @@ export class VesselViewer {
       });
     // Only the rotating content needs plane clipping; static lathes are built as halves.
     apply(this.pathGroup);
+    apply(this.transitionGroup);
     if (this.simVis) apply(this.simVis.laid);
   }
 

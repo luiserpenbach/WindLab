@@ -1,4 +1,6 @@
 import type {
+  CompositeSpec,
+  ContinuousSpec,
   CustomFiber,
   CustomLiner,
   CustomResin,
@@ -35,6 +37,10 @@ export function defaultMachine(): MachineSpec {
     samples_per_pass: 160,
     pause_between_layers: true,
   };
+}
+
+export function defaultContinuous(): ContinuousSpec {
+  return { enabled: false, max_angle_step: 7, slippage_margin: 0.8 };
 }
 
 export function axis(
@@ -77,6 +83,12 @@ export function defaultProject(): Project {
       temperature_min: -40,
       temperature_max: 65,
       temperature_ref: 20,
+      service_life: 15,
+      time_at_meop: 1,
+      rupture_pf_target: 1e-6,
+      hold_time: 60,
+      permeation_limit: 46,
+      permeation_temperature: 55,
     },
     composite: {
       fiber: 'T700S-12K',
@@ -84,10 +96,13 @@ export function defaultProject(): Project {
       fiber_volume_fraction: 0.6,
       translation_efficiency: 0.82,
       cure_temperature: 120,
+      strength_weibull_shape: null,
+      rupture_exponent: null,
     },
     materials: { fibers: [], resins: [], liners: [] },
     layers: [newLayer('helical', []), newLayer('hoop', [])],
     machine: defaultMachine(),
+    continuous: defaultContinuous(),
     tests: [],
   };
 }
@@ -113,6 +128,8 @@ export function newLayer(type: LayerType, existing: { id: string }[]): Layer {
     turnaround_offset: 0,
     turnaround_offset_b: null,
     pattern: null,
+    pattern_number: null,
+    pattern_direction: 'any',
     dwell_max: 90,
     passes: 2,
     end_offset_a: 0,
@@ -149,6 +166,10 @@ export function normalizeLayer(raw: unknown, before: { id: string }[]): Layer {
   out.fiber = typeof l.fiber === 'string' && l.fiber ? l.fiber : null;
   out.overlap = finite(l.overlap) ? l.overlap : 0;
   out.start_angle = finite(l.start_angle) ? l.start_angle : 0;
+  out.pattern_number =
+    finite(l.pattern_number) && l.pattern_number >= 1 ? Math.min(60, Math.round(l.pattern_number)) : null;
+  out.pattern_direction =
+    l.pattern_direction === 'leading' || l.pattern_direction === 'lagging' ? l.pattern_direction : 'any';
   return out;
 }
 
@@ -190,6 +211,11 @@ export function newCustomLiner(id: string): CustomLiner {
     fatigue_exp: -0.071,
     cte: 23.6e-6,
     k_ic: 29,
+    kind: 'metal',
+    max_temp: 150,
+    strain_limit: 0,
+    h2_permeability: 0,
+    perm_activation: 0,
   };
 }
 
@@ -210,6 +236,8 @@ function normalizeRecords<T extends { id: string; name: string }>(raw: unknown, 
         if (typeof v === 'string') rec[k] = v;
       }
     }
+    if (rec.kind != null && rec.kind !== 'metal' && rec.kind !== 'polymer')
+      rec.kind = (d as Record<string, unknown>).kind;
     out.push(rec as T);
   }
   return out;
@@ -284,6 +312,23 @@ export function normalizeTests(raw: unknown): TestRecord[] {
   return out;
 }
 
+function normalizeComposite(d: CompositeSpec, raw: Partial<CompositeSpec> | undefined): CompositeSpec {
+  const c = { ...d, ...(raw ?? {}) };
+  c.strength_weibull_shape = finite(c.strength_weibull_shape) ? c.strength_weibull_shape : null;
+  c.rupture_exponent = finite(c.rupture_exponent) ? c.rupture_exponent : null;
+  return c;
+}
+
+function normalizeContinuous(raw: Partial<ContinuousSpec> | undefined): ContinuousSpec {
+  const d = defaultContinuous();
+  const c = raw ?? {};
+  return {
+    enabled: c.enabled === true,
+    max_angle_step: finite(c.max_angle_step) ? c.max_angle_step : d.max_angle_step,
+    slippage_margin: finite(c.slippage_margin) ? c.slippage_margin : d.slippage_margin,
+  };
+}
+
 /**
  * Fill missing fields of a (possibly older / partial) project with defaults so
  * that imported JSON never leaves the UI with undefined values.
@@ -304,10 +349,11 @@ export function normalizeProject(raw: unknown): Project {
     notes: typeof p.notes === 'string' ? p.notes : '',
     liner: normalizeLiner(d.liner, p.liner),
     requirements: { ...d.requirements, ...(p.requirements ?? {}) },
-    composite: { ...d.composite, ...(p.composite ?? {}) },
+    composite: normalizeComposite(d.composite, p.composite),
     materials: normalizeMaterials(p.materials),
     tests: normalizeTests(p.tests),
     layers,
+    continuous: normalizeContinuous(p.continuous),
     machine: {
       ...dm,
       ...m,

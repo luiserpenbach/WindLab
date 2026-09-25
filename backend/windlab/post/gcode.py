@@ -15,7 +15,7 @@ import numpy as np
 from .. import __version__
 from .. import schemas as S
 from ..core.design import Build, build
-from ..core.kinematics import Motion, machine_coords, simulate_layer
+from ..core.kinematics import Motion, machine_coords, simulate_path
 
 GRBL_LETTERS = {"X", "Y", "Z"}
 GRBLHAL_LETTERS = {"X", "Y", "Z", "A", "B", "C"}
@@ -149,6 +149,18 @@ def _safe_radius(motions: list[Motion]) -> float:
     return float(max(mo.y.max() for mo in motions))
 
 
+def _segments(b: Build, layers):
+    """(label, surface layer, path, transition-or-None) in winding order."""
+    from ..core.kinematics import layer_path
+
+    if b.project.continuous.enabled and len(layers) > 1:
+        from ..core.continuous import plan
+
+        p = plan(b, layers)
+        return [(sg.label, sg.layer, sg.path, sg.transition) for sg in p.segments if len(sg.path.z) > 1], p
+    return [(bl.spec.id, bl, layer_path(b, bl), None) for bl in layers], None
+
+
 def generate(project: S.Project, layer_ids: list[str] | None = None) -> Program:
     b: Build = build(project)
     m = project.machine
@@ -159,54 +171,92 @@ def generate(project: S.Project, layer_ids: list[str] | None = None) -> Program:
     prog.warnings += post.validate()
     if not layers:
         prog.warnings.append("No layers selected")
-    motions = [simulate_layer(b, bl) for bl in layers]
+    segs, cplan = _segments(b, layers)
+    continuous = cplan is not None
+    if continuous:
+        idx = [bl.index for bl in layers]
+        if idx != list(range(idx[0], idx[0] + len(idx))):
+            prog.warnings.append("Continuous winding over non-adjacent layers: transitions join the selected layers")
+        for T in cplan.transitions:
+            if not T.feasible:
+                prog.warnings.append(f"Transition {T.src.spec.id} -> {T.dst.spec.id}: " + "; ".join(T.notes))
+    motions = [simulate_path(b, bl, path) for _, bl, path, _ in segs]
     L = prog.lines
     L += post.header(project)
     now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     L.append(post.comment(f"WindLab {__version__} - {project.name} - {now}"))
     L.append(post.comment(f"Machine: {m.name}, {m.axes_count}-axis, controller {m.controller}"))
     L.append(post.comment(f"Layers: {len(layers)}; units mm, deg; G93 inverse-time feed"))
+    if continuous:
+        L.append(post.comment(f"Continuous winding: {len(cplan.transitions)} transitions, "
+                              f"{sum(len(T.angles) for T in cplan.transitions)} transition passes, roving not cut"))
     safe = _safe_radius(motions) + 10.0 if motions else 0.0
     period = 360.0 * abs(m.mandrel.scale)
-    prev_end: float | None = None  # machine mandrel coordinate at the end of the previous layer
-    for mo in motions:
-        bl = mo.layer
+    prev_end: float | None = None  # machine mandrel coordinate at the end of the previous segment
+    prev_pos: dict | None = None
+    tension_now: float | None = None
+    for (label, bl, path, T), mo in zip(segs, motions):
         sp = bl.spec
-        desc = (f"Layer {bl.index + 1} {sp.id}: {sp.type}, {np.degrees(bl.angle):.2f} deg, "
-                f"band {sp.band_width} mm x {sp.tows} tow")
-        if bl.pattern:
-            desc += (f", pattern {bl.pattern.n_bands}/{bl.pattern.shift} p{bl.pattern.pattern_number}, "
-                     f"dwell {np.degrees(bl.pattern.dwell):.1f} deg")
+        joined = continuous and prev_pos is not None  # fibre runs on from the previous segment
+        if T is not None:
+            desc = (f"Transition {T.src.spec.id} -> {T.dst.spec.id}: {T.kind}, {len(T.angles)} passes"
+                    + (f" at {', '.join(f'{np.degrees(a):.1f}' for a in T.angles)} deg" if T.angles else "")
+                    + f", max slippage {T.max_slip:.3f} (limit {T.limit:.3f})")
+        else:
+            desc = (f"Layer {bl.index + 1} {sp.id}: {sp.type}, {np.degrees(bl.angle):.2f} deg, "
+                    f"band {sp.band_width} mm x {sp.tows} tow")
+            if bl.pattern:
+                desc += (f", pattern {bl.pattern.n_bands}/{bl.pattern.shift} p{bl.pattern.pattern_number}, "
+                         f"dwell {np.degrees(bl.pattern.dwell):.1f} deg")
         L.append("")
         L.append(post.comment(desc))
         L.append(post.comment(f"Est. time {mo.total_time / 60:.1f} min, tension {sp.tension} N"))
         mc = machine_coords(m, mo.x, mo.y, mo.a, mo.b)
         wind_dir = 1.0 if mc["mandrel"][-1] >= mc["mandrel"][0] else -1.0
         if m.rotary_reset != "none":
-            # express the layer in the first mandrel turn; the physical angle is unchanged
+            # express the segment in the first mandrel turn; the physical angle is unchanged
             mc["mandrel"] = mc["mandrel"] - period * np.floor(mc["mandrel"][0] / period)
         if prev_end is not None:
-            # never turn the mandrel backwards between layers (the fibre is still attached): shift the layer
-            # by whole turns so its start lies ahead of the current position in the winding direction
             cur = prev_end % period if m.rotary_reset != "none" else prev_end
-            gap = (mc["mandrel"][0] - cur) * wind_dir
-            if gap < 0:
-                mc["mandrel"] = mc["mandrel"] + wind_dir * period * np.ceil(-gap / period)
-        safe_cf = float(machine_coords(m, [0], [safe], [0], [0])["crossfeed"][0])
-        if m.pause_between_layers:
-            L += post.pause(f"Layer {bl.index + 1} {sp.id}: {sp.tows} tow(s), band {sp.band_width} mm, "
-                            f"tension {sp.tension} N")
-        L.append("G94")
-        if m.axes_count >= 3:
-            L.append(post.words("G0", f"{m.crossfeed.letter}{post.fmt(safe_cf)}"))
+            if joined:
+                # the path continues: the nearest equivalent mandrel angle (it matches up to the eye lead)
+                mc["mandrel"] = mc["mandrel"] + period * np.round((cur - mc["mandrel"][0]) / period)
+            else:
+                # never turn the mandrel backwards between layers (the fibre is still attached): shift the
+                # layer by whole turns so its start lies ahead of the current position in the winding direction
+                gap = (mc["mandrel"][0] - cur) * wind_dir
+                if gap < -1e-6:
+                    mc["mandrel"] = mc["mandrel"] + wind_dir * period * np.ceil(-gap / period)
         if m.rotary_reset != "none" and prev_end is not None:
             L += post.set_rotary(prev_end % period)
         first = {k: float(v[0]) for k, v in mc.items()}
-        start_words = [w for w in post.axis_words(first) if m.axes_count < 3 or not w.startswith(m.crossfeed.letter)]
-        L.append(post.words("G0", *start_words))
-        if m.axes_count >= 3:
-            L.append(post.words("G0", f"{m.crossfeed.letter}{post.fmt(first['crossfeed'])}"))
-        L += post.tension(sp.tension)
+        if joined:
+            # no cut, no retract: move onto the next segment's first point at a gentle feed
+            if tension_now != sp.tension:
+                L += post.tension(sp.tension)
+                tension_now = sp.tension
+            here = dict(prev_pos, mandrel=prev_end % period if m.rotary_reset != "none" else prev_end)
+            d = max(abs(first[k] - here[k]) for k in first)
+            if d > 1e-3:
+                t_join = max(0.5, d / 20.0)
+                L.append("G93")
+                L.append(post.words("G1", *post.axis_words(first), f"F{post.fmt(60.0 / t_join, 2)}"))
+                prog.total_time += t_join
+        else:
+            safe_cf = float(machine_coords(m, [0], [safe], [0], [0])["crossfeed"][0])
+            if m.pause_between_layers:
+                L += post.pause(f"Layer {bl.index + 1} {sp.id}: {sp.tows} tow(s), band {sp.band_width} mm, "
+                                f"tension {sp.tension} N")
+            L.append("G94")
+            if m.axes_count >= 3:
+                L.append(post.words("G0", f"{m.crossfeed.letter}{post.fmt(safe_cf)}"))
+            start_words = [w for w in post.axis_words(first)
+                           if m.axes_count < 3 or not w.startswith(m.crossfeed.letter)]
+            L.append(post.words("G0", *start_words))
+            if m.axes_count >= 3:
+                L.append(post.words("G0", f"{m.crossfeed.letter}{post.fmt(first['crossfeed'])}"))
+            L += post.tension(sp.tension)
+            tension_now = sp.tension
         L.append("G93")
         dt = np.diff(mo.t)
         circuit_set = set(mo.circuit_starts[1:]) if m.rotary_reset == "circuit" else set()
@@ -221,10 +271,11 @@ def generate(project: S.Project, layer_ids: list[str] | None = None) -> Program:
             f = 60.0 / max(float(dt[i - 1]), 1e-4)
             L.append(post.words("G1", *post.axis_words(pos), f"F{post.fmt(f, 2)}"))
         prev_end = float(mc["mandrel"][-1])
+        prev_pos = {k: float(v[-1]) for k, v in mc.items()}
         prog.total_time += mo.total_time
-        prog.warnings += [f"Layer {bl.index + 1}: {w}" for w in mo.warnings]
+        where = f"Transition {label}" if T is not None else f"Layer {bl.index + 1}"
+        prog.warnings += [f"{where}: {w}" for w in mo.warnings]
     L.append("")
     L.append(post.comment(f"Total estimated winding time {prog.total_time / 60:.1f} min"))
     L += post.footer()
     return prog
-

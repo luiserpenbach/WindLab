@@ -105,3 +105,13 @@ export function renameMaterialRefs(p: Project, kind: MatKind, from: string, to: 
   if (kind === 'resins') return p.composite.resin === from ? { ...p, composite: { ...p.composite, resin: to } } : p;
   return p.liner.material === from ? { ...p, liner: { ...p.liner, material: to } } : p;
 }
+
+/** Polymer (Type IV) liner record; older catalogs without `kind` are metal. */
+export const isPolymerLiner = (m: Pick<LinerMaterial, 'kind'> | null | undefined): boolean => m?.kind === 'polymer';
+
+/** Whether the project's liner material is a polymer (Type IV vessel). */
+export function usePolymerLiner(): boolean {
+  const lists = useMaterialLists();
+  const { project } = useProject();
+  return isPolymerLiner(findMat(lists.liners, project.liner.material)?.rec);
+}
