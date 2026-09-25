@@ -51,7 +51,13 @@ def export(project: S.Project, p_af: float | None = None) -> dict[str, str]:
     fidx = shellfe._mesh(b)
     zn = shellfe._interp_idx(prof.z, fidx)
     rn = shellfe._interp_idx(prof.r, fidx)
-    ri_end = float(shellfe._interp_idx(b.liner_inner.r, fidx)[-1])
+    zi = shellfe._interp_idx(b.liner_inner.z, fidx)
+    ri = shellfe._interp_idx(b.liner_inner.r, fidx)
+    ri_end = float(ri[-1])
+    # Abaqus applies shell pressure on the reference surface (liner outer): scale each element by the ratio
+    # of inner to reference surface area so the resultant is the pressure on the liner inner surface
+    area_ratio = (0.5 * (ri[1:] + ri[:-1]) * np.hypot(np.diff(zi), np.diff(ri))) / np.maximum(
+        0.5 * (rn[1:] + rn[:-1]) * np.hypot(np.diff(zn), np.diff(rn)), 1e-12)
     fmid = 0.5 * (fidx[1:] + fidx[:-1])
     sec = shellfe.sections(b, fmid)
     n = len(zn)
@@ -82,7 +88,7 @@ def export(project: S.Project, p_af: float | None = None) -> dict[str, str]:
             if t < 1e-4:
                 continue
             a = round(math.degrees(sec.angles[e, k]) / ANGLE_BIN) * ANGLE_BIN
-            fid = "".join(ch if ch.isalnum() else "_" for ch in L.fiber.id).upper()
+            fid = "F_" + "".join(ch if ch.isalnum() else "_" for ch in L.fiber.id).upper()
             name = f"{fid}_A{a:06.2f}".replace(".", "P")
             mats[name] = _lamina(L.ply.Q(), a) + (L.ply.G12,)
             plies.append((t, name, 0.0))
@@ -114,7 +120,9 @@ def export(project: S.Project, p_af: float | None = None) -> dict[str, str]:
              ("UNLOAD_PROOF", 0.0), ("MEOP", req.meop), ("UNLOAD_MEOP", 0.0)]
     for name, p in steps:
         w(f"*STEP, NAME={name}, INC=200\n*STATIC\n0.05, 1., 1e-6, 0.25\n")
-        w(f"*DLOAD, OP=NEW\nVESSEL, P, {-p:.4f}\n")
+        w("*DLOAD, OP=NEW\n")
+        for e in range(n - 1):
+            w(f"{e + 1}, P, {-p * area_ratio[e]:.5f}\n")
         w(f"*CLOAD, OP=NEW\nBOSS_B, 2, {boss_force * p:.3f}\n")
         w("*OUTPUT, FIELD\n*NODE OUTPUT\nU\n*ELEMENT OUTPUT, DIRECTIONS=YES\nS, E, PEEQ\n*END STEP\n")
     w(f"** Fibre failure strain (delivered, fibre direction): {fibre_eps:.5f}\n")

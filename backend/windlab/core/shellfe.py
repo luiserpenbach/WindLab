@@ -122,8 +122,7 @@ def sections(b: Build, fidx_mid: np.ndarray) -> Section:
         t = np.maximum(_interp_idx(bl.thickness, fidx_mid), 0.0)
         zb[:, k + 2] = zb[:, k + 1] + t
         if bl.spec.type == "helical":
-            zbase = _interp_idx(bl.base.z, fidx_mid)
-            angles[:, k] = bl.gp.alpha_at_z(zbase)
+            angles[:, k] = bl.gp.alpha_at_s(_interp_idx(bl.base.s, fidx_mid))
         else:
             angles[:, k] = bl.angle
     ABD = np.zeros((n_el, 4, 4))
@@ -159,6 +158,7 @@ def solve(b: Build, pressure: float) -> FESolution:
     zi = _interp_idx(b.liner_inner.z, fidx)
     ri = _interp_idx(b.liner_inner.r, fidx)
     L_in = np.hypot(np.diff(zi), np.diff(ri))
+    n_in = np.stack([-np.diff(ri), np.diff(zi)], axis=1) / np.maximum(L_in, 1e-12)[:, None]  # (nz, nr) outward
 
     rows, cols, vals = [], [], []
     F = np.zeros(3 * n)
@@ -189,9 +189,14 @@ def solve(b: Build, pressure: float) -> FESolution:
             Bm[3, [1, 2, 4, 5]] = -se / r * dH
             dA = 2 * math.pi * r * Le * wg
             Ke += Bm.T @ C @ Bm * dA
-            # pressure on the liner inner surface (its own arc length), along the outward normal
+            # pressure on the liner inner surface: force along the inner segment's own outward normal,
+            # projected onto this element's meridional (u) and normal (w) directions
             r_in = ri[e] + (ri[e + 1] - ri[e]) * xi
-            fe[[1, 2, 4, 5]] += H * pressure * 2 * math.pi * r_in * L_in[e] * wg
+            f_p = pressure * 2 * math.pi * r_in * L_in[e] * wg
+            fu = f_p * (n_in[e, 0] * ce + n_in[e, 1] * se)
+            fw = f_p * (-n_in[e, 0] * se + n_in[e, 1] * ce)
+            fe[[0, 3]] += Nu * fu
+            fe[[1, 2, 4, 5]] += H * fw
         Kg = T.T @ Ke @ T
         fg = T.T @ fe
         dof = np.array([3 * e, 3 * e + 1, 3 * e + 2, 3 * e + 3, 3 * e + 4, 3 * e + 5])

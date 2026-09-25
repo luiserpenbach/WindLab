@@ -181,9 +181,17 @@ def generate(project: S.Project, layer_ids: list[str] | None = None) -> Program:
         L.append(post.comment(desc))
         L.append(post.comment(f"Est. time {mo.total_time / 60:.1f} min, tension {sp.tension} N"))
         mc = machine_coords(m, mo.x, mo.y, mo.a, mo.b)
+        wind_dir = 1.0 if mc["mandrel"][-1] >= mc["mandrel"][0] else -1.0
         if m.rotary_reset != "none":
             # express the layer in the first mandrel turn; the physical angle is unchanged
             mc["mandrel"] = mc["mandrel"] - period * np.floor(mc["mandrel"][0] / period)
+        if prev_end is not None:
+            # never turn the mandrel backwards between layers (the fibre is still attached): shift the layer
+            # by whole turns so its start lies ahead of the current position in the winding direction
+            cur = prev_end % period if m.rotary_reset != "none" else prev_end
+            gap = (mc["mandrel"][0] - cur) * wind_dir
+            if gap < 0:
+                mc["mandrel"] = mc["mandrel"] + wind_dir * period * np.ceil(-gap / period)
         safe_cf = float(machine_coords(m, [0], [safe], [0], [0])["crossfeed"][0])
         if m.pause_between_layers:
             L += post.pause(f"Layer {bl.index + 1} {sp.id}: {sp.tows} tow(s), band {sp.band_width} mm, "

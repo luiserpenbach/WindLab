@@ -13,8 +13,8 @@ Model (per unit length of the cylinder section, membrane state):
 * Composite: CLT reduced stiffness per ply group; failure when the
   fibre-direction strain reaches the delivered fibre failure strain.
 
-Not modelled (documented limitations): cure/thermal and winding-tension
-residual stresses, Bauschinger effect (a 0.9 knock-down is used on the
+Not modelled (documented limitations): winding-tension residual
+stresses, Bauschinger effect (a 0.9 knock-down is used on the
 reverse-yield check instead), dome bending, and through-thickness strain
 gradients.
 """
@@ -265,13 +265,16 @@ def burst(v: Vessel, start: State, p_guess: float) -> tuple[float, str, State]:
     """Ramp from ``start`` until the first ply group reaches its fibre failure strain."""
     cur = start
     p_step = max(p_guess / 60.0, 0.05)
-    prev_ratio = max(v.fiber_ratio(cur.eps).values())
+    ratios0 = v.fiber_ratio(cur.eps)
+    prev_ratio = max(ratios0.values())
+    if prev_ratio >= 1.0:  # already failed (e.g. during autofrettage): no further load capacity
+        return cur.p, max(ratios0.items(), key=lambda kv: kv[1])[0], cur
     for _ in range(2000):
         nxt = v.solve(cur.p + p_step, cur.liner, cur.eps)
         ratios = v.fiber_ratio(nxt.eps)
         mode, r = max(ratios.items(), key=lambda kv: kv[1])
         if r >= 1.0:
-            f = (1.0 - prev_ratio) / max(r - prev_ratio, 1e-12)
+            f = min(max((1.0 - prev_ratio) / max(r - prev_ratio, 1e-12), 0.0), 1.0)
             pb = cur.p + f * p_step
             return pb, mode, nxt
         cur, prev_ratio = nxt, r

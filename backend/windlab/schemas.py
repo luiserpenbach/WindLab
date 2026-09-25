@@ -411,6 +411,7 @@ class ThicknessMapResult(BaseModel):
     z: list[float] = Field(..., description="Axial position of the grid rows [mm]")
     s: list[float] = Field(..., description="Liner meridian arclength of the grid rows [mm]")
     r: list[float] = Field(..., description="Outer surface radius after this layer at the rows [mm]")
+    z_surface: list[float] = Field(default_factory=list, description="Axial position of that surface point [mm]")
     phi: list[float] = Field(..., description="Grid columns [deg]")
     t: list[list[float]] = Field(..., description="Thickness [mm], rows x columns (downsampled)")
     mean: list[float]

@@ -97,6 +97,7 @@ class PathPoints:
     alpha: Optional[np.ndarray] = None  # winding angle [rad]
     lam: Optional[np.ndarray] = None  # slippage coefficient
     dwell: Optional[np.ndarray] = None  # True on dwell arcs at the turnarounds
+    s: Optional[np.ndarray] = None  # meridian arclength on the surface the fibre lies on [mm]
 
     def xyz(self) -> np.ndarray:
         # negative sine so the mandrel turns in the positive sense while winding
@@ -128,29 +129,32 @@ def helical_layer_path(
     alpha = getattr(p, "alpha", np.arcsin(np.clip(gp.r0 / np.maximum(p.r, 1e-9), 0, 1)))
     lam = getattr(p, "lam", np.zeros_like(p.z))
     slip = (getattr(gp, "dwell_slip_a", 0.0), getattr(gp, "dwell_slip_b", 0.0))
-    zs, rs, ps, als, lms, dws, starts = [], [], [], [], [], [], []
+    zs, rs, ps, als, lms, dws, ss, starts = [], [], [], [], [], [], [], []
+    s_pass = np.asarray(p.s, dtype=float)
 
-    def add(z, r, ph, al, lm, dw=False):
+    def add(z, r, ph, al, lm, dw=False, sv=None):
         zs.append(z), rs.append(r), ps.append(ph), als.append(al), lms.append(lm)
         dws.append(np.full(len(z), dw))
+        ss.append(np.full(len(z), sv) if np.isscalar(sv) else sv)
 
     phi = 0.0
     for _ in range(n_circuits):
         starts.append(sum(len(a) for a in zs))
-        add(p.z, p.r, phi + p.phi - p.phi[0], alpha, lam)  # A -> B
+        add(p.z, p.r, phi + p.phi - p.phi[0], alpha, lam, sv=s_pass)  # A -> B
         phi += p.advance
         dz, dr, dp = _dwell_arc(p.z[-1], p.r[-1], phi, dwell, samples)
-        add(dz, dr, dp, np.full(len(dz), np.pi / 2), np.full(len(dz), slip[1]), True)
+        add(dz, dr, dp, np.full(len(dz), np.pi / 2), np.full(len(dz), slip[1]), True, float(s_pass[-1]))
         phi += dwell
         # B -> A: the same path walked backwards, still advancing in phi
-        add(p.z[::-1][1:], p.r[::-1][1:], phi + (p.phi[-1] - p.phi[::-1])[1:], alpha[::-1][1:], lam[::-1][1:])
+        add(p.z[::-1][1:], p.r[::-1][1:], phi + (p.phi[-1] - p.phi[::-1])[1:], alpha[::-1][1:], lam[::-1][1:],
+            sv=s_pass[::-1][1:])
         phi += p.advance
         dz, dr, dp = _dwell_arc(p.z[0], p.r[0], phi, dwell, samples)
-        add(dz, dr, dp, np.full(len(dz), np.pi / 2), np.full(len(dz), slip[0]), True)
+        add(dz, dr, dp, np.full(len(dz), np.pi / 2), np.full(len(dz), slip[0]), True, float(s_pass[0]))
         phi += dwell
     assert abs((2 * p.advance + 2 * dwell) - shift_per_circuit) < 1e-6 or shift_per_circuit == 0
     return PathPoints(np.concatenate(zs), np.concatenate(rs), np.concatenate(ps), starts,
-                      np.concatenate(als), np.concatenate(lms), np.concatenate(dws))
+                      np.concatenate(als), np.concatenate(lms), np.concatenate(dws), np.concatenate(ss))
 
 
 def hoop_layer_path(
@@ -180,4 +184,6 @@ def hoop_layer_path(
     z = np.concatenate(zs)
     r = profile.radius_at(z)
     alpha = np.full(len(z), np.arctan2(2 * np.pi * float(np.mean(r)), pitch))
-    return PathPoints(z, r, np.concatenate(ps), starts, alpha, np.zeros(len(z)))
+    order = np.argsort(profile.z)
+    s_path = np.interp(z, profile.z[order], profile.s[order])  # cylinder: z is single-valued
+    return PathPoints(z, r, np.concatenate(ps), starts, alpha, np.zeros(len(z)), np.zeros(len(z), dtype=bool), s_path)

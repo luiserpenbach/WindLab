@@ -249,7 +249,7 @@ def dome_netting_stress(b: Build, p: float) -> tuple[np.ndarray, np.ndarray]:
     for bl in b.layers:
         if bl.spec.type != "helical":
             continue
-        cos2 = np.cos(bl.gp.alpha_at_z(bl.base.z)) ** 2
+        cos2 = np.cos(bl.gp.alpha_at_s(bl.base.s)) ** 2
         denom += bl.thickness * cos2
         # netting is meaningless inside the turnaround bands (boss and liner carry load there)
         r_excl = max(r_excl, max(bl.gp.r_a, bl.gp.r_b) + 2 * bl.spec.band_width)
@@ -284,7 +284,18 @@ def structural(b: Build) -> tuple[S.StructuralResult, dict]:
     i_meop = max(i for i, ph in enumerate(phases) if ph == "meop")
     residual_state = hist[i_af_end].state
     meop_state = hist[i_meop].state
-    pb, mode, _ = burst(v, hist[-1].state, pb_est)
+    # fibres may already fail during the pressure history (autofrettage above the burst capacity)
+    pb = mode = None
+    for h0, h1 in zip(hist[:-1], hist[1:]):
+        r0 = max(v.fiber_ratio(h0.state.eps).values())
+        r1s = v.fiber_ratio(h1.state.eps)
+        m1, r1 = max(r1s.items(), key=lambda kv: kv[1])
+        if r1 >= 1.0 > r0 and h1.state.p > h0.state.p:
+            pb = h0.state.p + (1.0 - r0) / (r1 - r0) * (h1.state.p - h0.state.p)
+            mode = m1
+            break
+    if pb is None:
+        pb, mode, _ = burst(v, hist[-1].state, pb_est)
     ratios = v.fiber_ratio(meop_state.eps)
     mat = get_liner(b.project.liner.material, b.project.materials)
     # MEOP at the operating temperature extremes (elastic reload from the final state)
@@ -455,7 +466,8 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
                     value=extra["reverse_yield_ratio"], limit=REVERSE_YIELD_LIMIT,
                     detail="Residual liner von Mises / yield (0.9 allows for the Bauschinger effect)"))
     out.append(_chk("af.fiber", "Fibre strain during autofrettage", extra["af_fiber_ratio"] <= AF_FIBER_RATIO_LIMIT,
-                    warn=True, value=extra["af_fiber_ratio"], limit=AF_FIBER_RATIO_LIMIT))
+                    warn=extra["af_fiber_ratio"] < 1.0, value=extra["af_fiber_ratio"], limit=AF_FIBER_RATIO_LIMIT,
+                    detail="Fibres would fail during autofrettage" if extra["af_fiber_ratio"] >= 1.0 else ""))
     out.append(_chk("liner.meop", "Liner elastic at MEOP", extra["meop_yield_ratio"] <= 1.0 + 1e-6,
                     value=extra["meop_yield_ratio"], limit=1.0))
     out.append(_chk("liner.proof", "Liner elastic at proof", extra["proof_plastic"] <= 1e-6, warn=True,
@@ -705,14 +717,21 @@ def suggest_layup(project: S.Project, max_iter: int = 60) -> tuple[list[S.Layer]
                 n_hel += 1
             else:
                 n_hoop += 1
-        elif fails & {"af.window", "af.reverse", "fatigue", "liner.meop"}:
+        elif "sr.temp" in fails or "liner.lbb" in fails:
+            n_hoop += 1
+        elif fails & {"af.window", "af.reverse", "fatigue", "liner.meop", "liner.temp"}:
             # liner too dominant: stiffen the overwrap in proportion to the netting split
             n_hoop += 1
             if st.stress_ratio_helical > 0.8 * st.stress_ratio_hoop:
                 n_hel += 1
         else:
-            notes.append(f"Converged after {it + 1} iteration(s): burst {st.burst_pressure:.1f} MPa "
-                         f"({st.burst_mode}-first), {n_hel} helical + {n_hoop} hoop layers")
+            rest = sorted(f for f in fails if not f.startswith("tension."))
+            if rest:
+                notes.append(f"Sized after {it + 1} iteration(s), but these checks cannot be fixed by adding "
+                             f"layers: {', '.join(rest)} (e.g. slippage/path: adjust angles, friction or offsets)")
+            else:
+                notes.append(f"Converged after {it + 1} iteration(s): burst {st.burst_pressure:.1f} MPa "
+                             f"({st.burst_mode}-first), {n_hel} helical + {n_hoop} hoop layers")
             break
         layers = make(n_hel, n_hoop)
     else:

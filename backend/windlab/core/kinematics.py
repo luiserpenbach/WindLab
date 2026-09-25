@@ -70,7 +70,8 @@ def _dedupe(path: PathPoints) -> PathPoints:
     new_index = np.cumsum(keep) - 1
     starts = sorted({int(new_index[c]) for c in path.circuit_starts})
     f = lambda a: None if a is None else a[keep]  # noqa: E731
-    return PathPoints(path.z[keep], path.r[keep], path.phi[keep], starts, f(path.alpha), f(path.lam), f(path.dwell))
+    return PathPoints(path.z[keep], path.r[keep], path.phi[keep], starts, f(path.alpha), f(path.lam), f(path.dwell),
+                      f(path.s))
 
 
 def profile_envelope(prof, xs: np.ndarray) -> np.ndarray:
@@ -155,9 +156,13 @@ def min_eye_radius(m: S.MachineSpec) -> float:
 def _surface_normals(bl: BuiltLayer, path: PathPoints) -> np.ndarray:
     prof = bl.base
     n = prof.normals()
-    order = np.argsort(prof.z)
-    nz = np.interp(path.z, prof.z[order], n[order, 0])
-    nr = np.interp(path.z, prof.z[order], n[order, 1])
+    if path.s is not None:  # by meridian arclength: robust on folded build-ups
+        nz = np.interp(path.s, prof.s, n[:, 0])
+        nr = np.interp(path.s, prof.s, n[:, 1])
+    else:
+        order = np.argsort(prof.z)
+        nz = np.interp(path.z, prof.z[order], n[order, 0])
+        nr = np.interp(path.z, prof.z[order], n[order, 1])
     return np.stack([nz, nr * np.cos(path.phi), -nr * np.sin(path.phi)], axis=1)
 
 
@@ -205,7 +210,7 @@ def _refine(path: PathPoints, k: np.ndarray) -> PathPoints:
 
     starts = [int(np.searchsorted(idx, c)) for c in path.circuit_starts]
     dwell = None if path.dwell is None else np.interp(idx, base, path.dwell.astype(float)) > 0.5
-    return PathPoints(f(path.z), f(path.r), f(path.phi), starts, f(path.alpha), f(path.lam), dwell)
+    return PathPoints(f(path.z), f(path.r), f(path.phi), starts, f(path.alpha), f(path.lam), dwell, f(path.s))
 
 
 def simulate_layer(b: Build, bl: BuiltLayer) -> Motion:
@@ -221,6 +226,13 @@ def simulate_layer(b: Build, bl: BuiltLayer) -> Motion:
             break
         path = _refine(path, np.minimum(np.maximum(k, 1), 16))
         mo = _simulate(b, bl, path)
+    step = np.diff(mo.a)
+    wind = np.sign(mo.a[-1] - mo.a[0]) or 1.0
+    if step.size and np.max(np.abs(step * wind)[step * wind < 0], initial=0.0) > 2.0:
+        i = int(np.argmin(step * wind))
+        mo.warnings.append(f"Mandrel reverses by up to {abs(step[i]):.1f} deg per segment near z = "
+                           f"{mo.contact[i, 0]:.0f} mm (eye geometry at the turnaround): check that the tensioner "
+                           "takes up the slack")
     da, dx = np.abs(np.diff(mo.a)), np.abs(np.diff(mo.x))
     bad = (da > 2 * MAX_STEP_DEG) | (dx > 2 * MAX_STEP_MM)
     if bad.any():

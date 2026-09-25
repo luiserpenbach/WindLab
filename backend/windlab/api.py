@@ -198,8 +198,11 @@ def post_traveller(project: S.Project):
 
 
 # --------------------------------------------------------------------------- project storage
+_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(10)} | {f"LPT{i}" for i in range(10)}
+
+
 def _path(name: str) -> Path:
-    if not _NAME.match(name) or ".." in name:
+    if not _NAME.fullmatch(name) or ".." in name or name.split(".")[0].strip().upper() in _RESERVED:
         raise HTTPException(status_code=400, detail="Invalid project name")
     return PROJECT_DIR / f"{name}.json"
 

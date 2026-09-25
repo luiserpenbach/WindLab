@@ -76,7 +76,9 @@ def traveller(project: S.Project) -> dict[str, str]:
         spec = project.layers[L.index]
         if L.type == "helical" and L.pattern:
             pat = f"{L.pattern.n_bands}/{L.pattern.shift} (p{L.pattern.pattern_number}), dwell {L.pattern.dwell:.1f}°"
-            extent = f"r0 {L.turnaround_radius:.1f} mm"
+            extent = (f"r0 {L.turnaround_a:.1f} / {L.turnaround_b:.1f} mm"
+                      if L.turnaround_a is not None and abs(L.turnaround_a - L.turnaround_b) > 0.05
+                      else f"r0 {L.turnaround_radius:.1f} mm")
         else:
             pat = f"{spec.passes} passes"
             extent = f"z {L.z_start:.0f} … {L.z_end:.0f} mm"

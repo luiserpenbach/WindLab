@@ -150,7 +150,7 @@ def report_html(project: S.Project) -> str:
                   f"{st.burst_mode}-first"))
     if fe:
         k.append(("Burst incl. domes (FE)", _f(fe.dome_burst, 1, "MPa"), f"critical {fe.critical_layer} at z = "
-                  f"{fe.critical_z:.0f} mm"))
+                  f"{fe.critical_z:.0f} mm"))  # escaped below with the other KPI texts
     if st:
         k.append(("Autofrettage", _f(st.autofrettage_pressure, 1, "MPa"), f"window {_f(st.autofrettage_window[0])}"
                   f" – {_f(st.autofrettage_window[1])}"))
@@ -162,7 +162,7 @@ def report_html(project: S.Project) -> str:
     k += [("Mass", _f(m.total / 1000, 2, "kg"), f"liner {m.liner / 1000:.2f} · composite "
            f"{(m.fiber + m.resin) / 1000:.2f} kg"), ("Volume", _f(m.volume, 2, "L"), ""),
           ("PV/W", _f(m.pv_w, 1, "km"), "at predicted burst")]
-    P.append("<div class='kpis'>" + "".join(f"<div class='kpi'><small>{html.escape(a)}</small><b>{v}</b>"
+    P.append("<div class='kpis'>" + "".join(f"<div class='kpi'><small>{html.escape(a)}</small><b>{html.escape(v)}</b>"
                                               f"<small>{html.escape(c)}</small></div>" for a, v, c in k) + "</div>")
 
     # checks
@@ -210,7 +210,7 @@ def report_html(project: S.Project) -> str:
             slip = f"{max(abs(L.slippage_a), abs(L.slippage_b)):.3f}" if L.winding == "non-geodesic" else "0"
         else:
             pat, path, slip = f"{spec.passes} passes", f"z {L.z_start:.0f}…{L.z_end:.0f}", "–"
-        rows.append([str(L.index + 1), L.type, f"{L.angle:.2f}°", path, f"{spec.tows}×{spec.band_width:g}",
+        rows.append([html.escape(f"{L.index + 1} {L.id}"), L.type, f"{L.angle:.2f}°", path, f"{spec.tows}×{spec.band_width:g}",
                      f"{spec.tension:g}", f"{L.thickness:.3f}", pat, slip, f"{L.fiber_length:.0f}",
                      f"{L.wind_time / 60:.0f}"])
     P.append(_table(["#", "Type", "Angle", "Path", "Band [mm]", "T [N]", "t [mm]", "Pattern", "|λ|",
@@ -248,7 +248,8 @@ def report_html(project: S.Project) -> str:
                                "liner stress range at MEOP [MPa]", height=200))
             P.append(f"<p class='note'>Liner hot spot {fe.liner_hotspot_factor:.2f}× the cylinder stress range "
                      f"at z = {fe.liner_hotspot_z:.0f} mm; estimated life {fe.liner_hotspot_cycles:,.0f} cycles. "
-                     f"Critical fibre location: layer {fe.critical_layer} at z = {fe.critical_z:.0f} mm.</p>")
+                     f"Critical fibre location: layer {html.escape(str(fe.critical_layer))} at z = "
+                     f"{fe.critical_z:.0f} mm.</p>")
 
     # manufacturing
     P.append("<h2>5. Manufacturing</h2>")
@@ -272,8 +273,9 @@ def report_html(project: S.Project) -> str:
     P.append("<h2>6. Assumptions and limitations</h2><ul>")
     for t in (
         "Material properties are typical datasheet values; use qualified, lot-specific allowables.",
-        "Cylinder model: exact equilibrium, shared strains, J2 liner plasticity with linear hardening; no "
-        "cure/thermal residual stresses; Bauschinger effect covered by a 0.9 reverse-yield knock-down.",
+        "Cylinder model: exact equilibrium, shared strains, J2 liner plasticity with linear hardening, thermal "
+        "strains from the cure cool-down and the operating temperature range; winding-tension prestress not "
+        "included; Bauschinger effect covered by a 0.9 reverse-yield knock-down.",
         "Shell FE is linear elastic at MEOP (the operating cycle of an autofrettaged liner); dome burst is the "
         "cylinder's nonlinear burst scaled by the FE strain distribution; bosses modelled as rigid rings.",
         "Liner fatigue uses indicative S-N data (SWT); confirm by cycle testing.",

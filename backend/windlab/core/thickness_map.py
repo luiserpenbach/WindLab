@@ -80,11 +80,11 @@ def _layer_points(b: Build, bl: BuiltLayer, step: float):
         path = layer_path(b, bl, samples=max(int(2 * math.pi * bl.R_mid / step), 72))
     # map the path onto the liner meridian coordinate via the shared point index of the profiles
     base = bl.base
-    order = np.argsort(base.z)
-    idx = np.interp(path.z, base.z[order], np.arange(len(base.z))[order].astype(float))
-    s_liner = np.interp(idx, np.arange(len(base.z)), b.liner_outer.s)
-    s_base = np.interp(idx, np.arange(len(base.z)), base.s)
-    return path, s_liner, s_base
+    # meridian arclength on the base surface -> point index -> liner arclength (profiles share indices);
+    # base.s is monotone even where the build-up folds in z
+    idx = np.interp(path.s, base.s, np.arange(len(base.s), dtype=float))
+    s_liner = np.interp(idx, np.arange(len(base.s)), b.liner_outer.s)
+    return path, s_liner, np.asarray(path.s, dtype=float)
 
 
 def layer_map(b: Build, bl: BuiltLayer, ds: float = 1.0, n_phi: int = 720, shape: str | None = None,
@@ -139,20 +139,52 @@ def layer_map(b: Build, bl: BuiltLayer, ds: float = 1.0, n_phi: int = 720, shape
     base = bl.base
     s_l = b.liner_outer.s
     r_c = np.interp(centres, s_l, base.r)
-    dsb = np.interp(centres, s_l, np.gradient(base.s) / np.maximum(np.gradient(s_l), 1e-12)) * np.diff(edges)
-    area = dsb * np.maximum(r_c, 1e-6) * (2 * math.pi / n_phi)
+    ratio_b = np.interp(centres, s_l, np.gradient(base.s) / np.maximum(np.gradient(s_l), 1e-12))
+    # where offset cleaning collapsed the build-up surface the local arc ratio tends to 0: floor it so the
+    # deposited volume is spread over a physical area instead of producing infinite thickness
+    ratio_b = np.maximum(ratio_b, 0.3)
+    r_l = np.interp(centres, s_l, b.liner_outer.r)
+    area = ratio_b * np.diff(edges) * np.maximum(r_c, 0.5 * r_l) * (2 * math.pi / n_phi)
     t = acc / area[:, None]
     z_c = np.interp(centres, s_l, b.liner_outer.z)
     phis = (np.arange(n_phi) + 0.5) * 2 * math.pi / n_phi
     return ThicknessMap(centres, z_c, phis, t, bl.t_cyl)
 
 
+_MAP_CACHE: dict = {}
+
+
+def _layer_key(b: Build, idx: int, kw: dict) -> str:
+    import hashlib
+
+    p = b.project
+    blob = "|".join([p.liner.model_dump_json(), p.composite.model_dump_json(), p.materials.model_dump_json(),
+                     p.machine.model_dump_json(include={"samples_per_pass"})]
+                    + [L.model_dump_json() for L in p.layers[: idx + 1]] + [repr(sorted(kw.items()))])
+    return hashlib.sha1(blob.encode()).hexdigest()
+
+
+def cached_layer_map(b: Build, idx: int, **kw) -> ThicknessMap:
+    key = _layer_key(b, idx, kw)
+    if key not in _MAP_CACHE:
+        if len(_MAP_CACHE) > 96:
+            _MAP_CACHE.pop(next(iter(_MAP_CACHE)))
+        _MAP_CACHE[key] = layer_map(b, b.layers[idx], **kw)
+    return _MAP_CACHE[key]
+
+
 def cumulative_map(b: Build, upto: int, **kw) -> ThicknessMap:
-    maps = [layer_map(b, bl, **kw) for bl in b.layers[: upto + 1]]
+    maps = [cached_layer_map(b, i, **kw) for i in range(upto + 1)]
     t = sum(mp.t for mp in maps)
     nominal = sum(bl.t_cyl for bl in b.layers[: upto + 1])
     m0 = maps[0]
     return ThicknessMap(m0.s, m0.z, m0.phi, t, nominal)
+
+
+def block_rows(a: np.ndarray, fs: int, how: str) -> np.ndarray:
+    ns = len(a) // fs
+    blk = a[: ns * fs].reshape(ns, fs)
+    return {"mean": blk.mean, "min": blk.min, "max": blk.max}[how](axis=1)
 
 
 def downsample(tm: ThicknessMap, max_s: int = 240, max_phi: int = 360) -> ThicknessMap:
@@ -173,13 +205,14 @@ def map_result(b: Build, layer_id: str, cumulative: bool, ds: float, n_phi: int)
     if idx is None:
         raise KeyError(f"Layer '{layer_id}' not found")
     bl = b.layers[idx]
-    tm = cumulative_map(b, idx, ds=ds, n_phi=n_phi) if cumulative else layer_map(b, bl, ds=ds, n_phi=n_phi)
+    tm = cumulative_map(b, idx, ds=ds, n_phi=n_phi) if cumulative else cached_layer_map(b, idx, ds=ds, n_phi=n_phi)
     half = b.project.liner.cyl_length / 2
     st = tm.stats(half)
     layers = b.layers[: idx + 1] if cumulative else [bl]
     s_l = b.liner_outer.s
     analytic = sum(np.interp(tm.s, s_l, L.thickness) for L in layers)
     ds_ = downsample(tm)
+    fs_ = max(int(math.ceil(len(tm.s) / 240)), 1)
     warnings = []
     if st["gap_fraction"] > 0.005:
         warnings.append(f"{st['gap_fraction'] * 100:.1f}% of the cylinder is below half the nominal thickness (gaps)")
@@ -192,11 +225,12 @@ def map_result(b: Build, layer_id: str, cumulative: bool, ds: float, n_phi: int)
     rnd = lambda a: np.round(np.asarray(a, dtype=float), 4).tolist()  # noqa: E731
     return S.ThicknessMapResult(
         layer_id=layer_id, cumulative=cumulative,
-        z=rnd(ds_.z), s=rnd(ds_.s), r=rnd(np.interp(ds_.s, s_l, bl.top.r)), phi=rnd(np.degrees(ds_.phi)),
+        z=rnd(ds_.z), s=rnd(ds_.s), r=rnd(np.interp(ds_.s, s_l, bl.top.r)),
+        z_surface=rnd(np.interp(ds_.s, s_l, bl.top.z)), phi=rnd(np.degrees(ds_.phi)),
         t=np.round(ds_.t, 4).tolist(),
-        mean=rnd(st["mean"][:: max(len(tm.s) // len(ds_.s), 1)][: len(ds_.s)]),
-        min=rnd(st["min"][:: max(len(tm.s) // len(ds_.s), 1)][: len(ds_.s)]),
-        max=rnd(st["max"][:: max(len(tm.s) // len(ds_.s), 1)][: len(ds_.s)]),
+        mean=rnd(block_rows(st["mean"], fs_, "mean")),
+        min=rnd(block_rows(st["min"], fs_, "min")),
+        max=rnd(block_rows(st["max"], fs_, "max")),
         analytic=rnd(np.interp(ds_.s, tm.s, analytic)),
         nominal=tm.nominal, peak=st["peak"], analytic_peak=a_peak, cyl_mean=st["cyl_mean"], cyl_cv=st["cyl_cv"],
         gap_fraction=st["gap_fraction"], overlap_fraction=st["overlap_fraction"], warnings=warnings,

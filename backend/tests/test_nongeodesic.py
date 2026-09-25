@@ -81,9 +81,14 @@ def test_slippage_check_and_simulation():
 
 
 def test_unreachable_turnaround_is_reported():
-    p = S.Project(layers=[S.Layer(id="h", type="helical", winding="non-geodesic", angle=70.0),
+    # 70 deg is reachable, but only with slippage far beyond the friction
+    res = analyze(S.Project(layers=[S.Layer(id="h", type="helical", winding="non-geodesic", angle=70.0),
+                                    S.Layer(id="c", type="hoop")]))
+    assert next(c for c in res.checks if c.id == "layer.h.slip").status == "fail"
+    # a turnaround far outside the reachable range: the layer falls back to a geodesic path and is flagged
+    p = S.Project(layers=[S.Layer(id="h", type="helical", winding="non-geodesic", angle=5.0, turnaround_offset=60.0),
                           S.Layer(id="c", type="hoop")])
-    res = analyze(p)  # the analysis survives: the layer falls back to a geodesic path and is flagged
+    res = analyze(p)
     chk = next(c for c in res.checks if c.id == "layer.h.path")
     assert chk.status == "fail" and "reachable" in chk.detail
     assert res.structural is not None

@@ -98,6 +98,11 @@ class HelicalPass:
                            self.r_a, self.r_b, self.lam_a, self.lam_b, self.dwell_slip_a, self.dwell_slip_b,
                            self.alpha_mid, self.legs)
 
+    def alpha_at_s(self, s: np.ndarray) -> np.ndarray:
+        """Winding angle at meridian arclength s of the surface the pass lies on (90 deg beyond turnarounds)."""
+        order = np.argsort(self.s)
+        return np.interp(s, np.asarray(self.s)[order], self.alpha[order], left=HALF_PI, right=HALF_PI)
+
     def alpha_at_z(self, z: np.ndarray) -> np.ndarray:
         order = np.argsort(self.z)
         return np.interp(z, self.z[order], self.alpha[order])
@@ -310,25 +315,41 @@ def _shoot(tab: SurfaceTable, s_tan: float, a_tan: float, phi_tan: float, r_targ
     then refines the bracket.
     """
     lo, hi = -LAMBDA_SEARCH, LAMBDA_SEARCH
-    for it in range(2 if coarse else 5):
+    lam = 0.0
+    best: tuple[float, float] | None = None  # (lam, |r_turn - target|) of the closest valid lane so far
+    for it in range(4 if coarse else 12):
         lams = np.linspace(lo, hi, 13 if it else 37)
         r_t, *_ = _integrate(tab, s_tan, a_tan, phi_tan, lams, dl if it >= 2 else max(dl, 2.0))
         valid = np.isfinite(r_t) & (r_t > 0)
         d = np.where(valid, r_t - r_target, np.nan)
+        if valid.any():
+            k_best = int(np.nanargmin(np.abs(d)))
+            if best is None or abs(d[k_best]) < best[1]:
+                best = (float(lams[k_best]), float(abs(d[k_best])))
         pairs = [j for j in range(len(lams) - 1)
                  if valid[j] and valid[j + 1] and (d[j] <= 0 <= d[j + 1] or d[j + 1] <= 0 <= d[j])]
+        # the target may lie between a lane that runs onto the boss and the first lane that turns (above
+        # the target): refine into that interval
+        edges = [j for j in range(len(lams) - 1)
+                 if (not valid[j] and valid[j + 1] and d[j + 1] >= 0) or (valid[j] and not valid[j + 1] and d[j] >= 0)]
+        if not pairs and edges:
+            j = min(edges, key=lambda k: abs(lams[k] + lams[k + 1]))
+            lo, hi = lams[j], lams[j + 1]
+            continue
         if not pairs:
             near = np.where(valid, np.abs(d), np.inf)
             k = int(np.argmin(near))
             if near[k] <= max(0.3, 0.01 * r_target):  # target at the edge of the reachable range
                 return float(lams[k])
             if it == 0:
-                best = np.nanmax(np.where(valid, r_t, np.nan)) if valid.any() else float("nan")
+                best_r = np.nanmax(np.where(valid, r_t, np.nan)) if valid.any() else float("nan")
                 worst = np.nanmin(np.where(valid, r_t, np.nan)) if valid.any() else float("nan")
-                hint = "raise" if r_target > best else "lower"
+                hint = "raise" if r_target > best_r else "lower"
                 raise GeometryError(
                     f"Turnaround radius {r_target:.1f} mm is not reachable with |slippage| <= {LAMBDA_SEARCH} "
-                    f"(reachable {worst:.1f}-{best:.1f} mm): {hint} the cylinder angle")
+                    f"(reachable {worst:.1f}-{best_r:.1f} mm): {hint} the cylinder angle")
+            if best is not None and best[1] <= max(0.3, 0.01 * r_target):
+                return best[0]
             break
         j = min(pairs, key=lambda k: abs(lams[k] + lams[k + 1]))
         l0, l1, d0, d1 = lams[j], lams[j + 1], d[j], d[j + 1]

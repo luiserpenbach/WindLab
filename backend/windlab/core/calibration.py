@@ -48,7 +48,8 @@ def calibrate(project: S.Project) -> S.CalibrationResult:
         match = None
         exp_ratio = None
         if t.kind == "burst" and st:
-            pred = fe.dome_burst if fe else st.burst_pressure
+            # compare with the prediction for the location where it failed
+            pred = st.burst_pressure if (t.failure_location == "cylinder" or fe is None) else fe.dome_burst
             if pred_loc and t.failure_location in ("cylinder", "dome-a", "dome-b"):
                 match = t.failure_location == pred_loc
             if t.failure_location == "cylinder":
