@@ -214,6 +214,16 @@ export interface LayerResult {
   dwell_slippage: number;
   /** Friction coefficient mu of the layer */
   friction: number;
+  /** Smallest fibre normal curvature on the path [1/mm]; negative = concave (bridging) */
+  min_normal_curvature: number;
+  /** Path length per pass with negative normal curvature (fibre bridging) [mm] */
+  bridging_length: number;
+  /** Ply stress from the winding tension [MPa] */
+  winding_stress: number;
+  /** Ply prestress left after all layers are wound [MPa] */
+  residual_prestress: number;
+  /** Fraction of the winding prestress lost (0..1) */
+  tension_loss: number;
   z_start: number;
   z_end: number;
   /** x = z [mm], y = thickness [mm] */
@@ -325,6 +335,8 @@ export interface PathResult {
   alpha: number[];
   /** Slippage coefficient kg/kn at each point */
   slippage: number[];
+  /** True on dwell arcs at the turnarounds (may be empty on older backends) */
+  dwell?: boolean[];
 }
 
 export interface MachineFrame {
@@ -348,6 +360,75 @@ export interface SimulationResult {
   total_time: number;
   warnings: string[];
   limits_ok: boolean;
+}
+
+/** Band-level thickness simulation request (POST /api/thickness-map). */
+export interface ThicknessMapRequest {
+  project: Project;
+  layer_id: string;
+  /** Sum all layers up to and including this one (default true) */
+  cumulative?: boolean;
+  /** Grid cell size along the meridian [mm], 0.25..5 (default 1) */
+  resolution?: number;
+  /** Grid cells around the circumference, 90..2880 (default 720) */
+  n_phi?: number;
+}
+
+/**
+ * Band-level thickness map. Rows are uniform in the liner meridian arclength
+ * `s`; `z` is monotonic along the rows. Values may be null where the backend
+ * produced a non-finite number.
+ */
+export interface ThicknessMapResult {
+  layer_id: string;
+  cumulative: boolean;
+  /** Axial position of the grid rows [mm] */
+  z: number[];
+  /** Liner meridian arclength of the grid rows [mm] */
+  s: number[];
+  /** Outer surface radius after this layer at the rows [mm] */
+  r: number[];
+  /** Grid columns [deg] */
+  phi: number[];
+  /** Thickness [mm], rows x columns (downsampled to <= 240 x 360) */
+  t: (number | null)[][];
+  mean: (number | null)[];
+  min: (number | null)[];
+  max: (number | null)[];
+  /** Axisymmetric band-averaged model at the rows [mm] */
+  analytic: number[];
+  nominal: number;
+  peak: number | null;
+  analytic_peak: number;
+  cyl_mean: number;
+  /** Coefficient of variation of thickness in the cylinder */
+  cyl_cv: number;
+  /** Cylinder area below 50 % of nominal */
+  gap_fraction: number;
+  /** Cylinder area above 150 % of nominal */
+  overlap_fraction: number;
+  warnings: string[];
+}
+
+export interface TensionScheduleRequest {
+  project: Project;
+  /** Outermost layer tension [N]; null/omitted = keep the current one */
+  target_tension?: number | null;
+  /** Cap on inner layer stress vs target, 1..10 (omitted = backend default) */
+  max_factor?: number;
+}
+
+export interface TensionScheduleResult {
+  layer_ids: string[];
+  current_tension: number[];
+  /** [N] */
+  recommended_tension: number[];
+  /** Residual ply prestress with the current tensions [MPa] */
+  residual_current: number[];
+  residual_recommended: number[];
+  /** Liner hoop stress from the winding prestress [MPa] */
+  liner_hoop_current: number;
+  liner_hoop_recommended: number;
 }
 
 export interface GcodeRequest {

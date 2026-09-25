@@ -395,9 +395,10 @@ def mass(b: Build, p_burst: float) -> S.MassResult:
     return S.MassResult(liner=liner_g, fiber=fiber_g, resin=resin_g, total=total, volume=vol_l, pv_w=pvw)
 
 
-def _chk(id_, label, ok, warn=False, value=None, limit=None, unit="", detail="") -> S.Check:
+def _chk(id_, label, ok, warn=False, value=None, limit=None, unit="", detail="", refs=None) -> S.Check:
     status = "ok" if ok else ("warn" if warn else "fail")
-    return S.Check(id=id_, label=label, status=status, value=value, limit=limit, unit=unit, detail=detail)
+    return S.Check(id=id_, label=label, status=status, value=value, limit=limit, unit=unit, detail=detail,
+                   refs=refs or [])
 
 
 def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Check]:
@@ -411,18 +412,19 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
         for w in bl.warnings:
             if w.startswith("Non-geodesic path not feasible"):
                 continue
-            out.append(S.Check(id=f"layer.{bl.spec.id}", label=f"Layer {bl.index + 1}", status="warn", detail=w))
+            out.append(S.Check(id=f"layer.{bl.spec.id}", label=f"Layer {bl.index + 1}", status="warn", detail=w,
+                               refs=[bl.spec.id]))
     for bl in b.layers:
         if bl.spec.id in b.path_errors:
             out.append(S.Check(id=f"layer.{bl.spec.id}.path", label=f"Layer {bl.index + 1} path", status="fail",
-                               detail=b.path_errors[bl.spec.id]))
+                               detail=b.path_errors[bl.spec.id], refs=[bl.spec.id]))
             continue
         if bl.gp is None or bl.spec.winding != "non-geodesic":
             continue
         lam = max(abs(bl.gp.lam_a), abs(bl.gp.lam_b))
         mu = bl.spec.friction
         out.append(_chk(f"layer.{bl.spec.id}.slip", f"Layer {bl.index + 1} slippage", lam <= mu,
-                        warn=lam <= 1.25 * mu, value=lam, limit=mu,
+                        warn=lam <= 1.25 * mu, value=lam, limit=mu, refs=[bl.spec.id],
                         detail="Required |kg/kn| on the domes vs. available friction; above it the fibre slides"))
     if st is None:
         out.append(S.Check(id="layup.empty", label="Layup", status="fail", detail="Add layers or use Suggest layup"))
@@ -480,7 +482,7 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
     if tr is not None and len(tr.loss):
         worst = int(np.argmax(tr.loss))
         out.append(_chk("tension.loss", "Winding prestress retained", tr.loss[worst] <= 0.6, warn=tr.residual_stress[worst] > 0,
-                        value=float(tr.loss[worst]), limit=0.6,
+                        value=float(tr.loss[worst]), limit=0.6, refs=[b.layers[worst].spec.id],
                         detail=f"Layer {worst + 1} loses {tr.loss[worst] * 100:.0f}% of its winding prestress as later "
                                "layers compress it (slack inner layers wrinkle). Use the tension schedule."))
     bridging = [(bl, normal_curvature(bl)[1]) for bl in b.layers if bl.gp is not None]
@@ -489,6 +491,7 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
         worst = max(bridging, key=lambda x: x[1])
         names = ", ".join(str(bl.index + 1) for bl, _ in bridging)
         out.append(S.Check(id="layup.bridging", label="Fibre bridging", status="warn", value=worst[1], unit="mm",
+                           refs=[bl.spec.id for bl, _ in bridging],
                            detail=f"Layers {names} cross concave surface (negative normal curvature) near their "
                                   f"turnarounds and will bridge (worst {worst[1]:.0f} mm per pass, layer "
                                   f"{worst[0].index + 1}). Adjust turnaround offsets so turnarounds do not land "
@@ -557,6 +560,7 @@ def fe_result(b: Build, st: S.StructuralResult) -> S.FEResult:
         z=rnd(sol.z), r=rnd(sol.r), liner_vm_inner=rnd(ev.liner_vm_inner), liner_vm_outer=rnd(ev.liner_vm_outer),
         fiber_ratio=ratio, fiber_ratio_max=rnd(peak), node_z=rnd(sol.node_z), node_r=rnd(sol.node_r),
         radial_displacement=rnd(sol.Ur), axial_displacement=rnd(sol.Uz),
+        valid=[bool(x) for x in ev.valid], fiber_ratio_ref=ev.fiber_ref, liner_vm_ref=ev.liner_ref,
         dome_burst=ev.dome_burst, critical_z=ev.critical_z,
         critical_layer=b.layers[ev.critical_layer].spec.id if ev.critical_layer >= 0 else None,
         liner_hotspot_factor=ev.hotspot_factor, liner_hotspot_z=ev.hotspot_z,

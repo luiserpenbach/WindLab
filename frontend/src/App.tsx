@@ -3,18 +3,23 @@ import { Stepper } from './components/Stepper';
 import { TopBar } from './components/TopBar';
 import { Banner, Button, Spinner } from './components/ui';
 import { useAnalysis, useCatalog } from './state/analysis';
+import { useProject } from './state/projectStore';
 import { STEPS, useUi } from './state/uiStore';
 import { STEP_VIEWS } from './steps';
 import { Viewport } from './viewer/Viewport';
 
 export function App() {
-  const { step, setStep } = useUi();
+  const { step, setStep, setThk } = useUi();
+  const { revision } = useProject();
   const { error, stale, loading, retry, result } = useAnalysis();
   const catalog = useCatalog();
   const view = STEP_VIEWS[step];
   const meta = STEPS.find((s) => s.id === step)!;
 
-  // Alt+1..7 switches workflow steps.
+  // A loaded / new project invalidates the thickness map (it is not recomputed on edits).
+  useEffect(() => setThk(null), [revision, setThk]);
+
+  // Alt+1..8 switches workflow steps.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.altKey || e.ctrlKey || e.metaKey) return;

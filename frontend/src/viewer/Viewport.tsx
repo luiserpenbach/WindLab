@@ -1,14 +1,55 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import type { FEResult, LinerSpec } from '../api/types';
 import { Icon } from '../components/Icon';
 import { Spinner } from '../components/ui';
 import { useAnalysis } from '../state/analysis';
 import { playback } from '../state/playback';
 import { useProject } from '../state/projectStore';
+import { useThicknessScale } from '../state/thickness';
 import { useUi } from '../state/uiStore';
 import { layerColors } from './colors';
-import { colorPath, cssGradient, DWELL_COLOR, utilColor, UTIL_FAIL, viridis, type PathColoring } from './colormaps';
-import { VesselViewer } from './VesselViewer';
+import {
+  colorPath,
+  cssGradient,
+  DWELL_COLOR,
+  NODATA_RGB,
+  utilColor,
+  UTIL_FAIL,
+  viridis,
+  type PathColoring,
+  type Rgb,
+} from './colormaps';
+import { VesselViewer, type Deformation, type SurfaceOverlay } from './VesselViewer';
 import { sig } from '../util/format';
+
+const NODATA_CSS = `rgb(${NODATA_RGB.map((c) => Math.round(c * 255)).join(' ')})`;
+
+/**
+ * FE quantity along z for the surface overlay: values per element and the
+ * colour domain. The domain ignores the clamped zone next to the bosses
+ * (r < boss radius + 3 x wall; rigid-ring artefacts the backend also skips),
+ * where values then saturate.
+ */
+function feOverlayData(
+  fe: FEResult,
+  kind: 'fiber' | 'liner',
+  liner: LinerSpec,
+): { values: (number | null)[]; hi: number; max: number; clipped: boolean } {
+  const values: (number | null)[] =
+    kind === 'fiber'
+      ? fe.fiber_ratio_max.map((v) => (v == null || !Number.isFinite(v) ? null : v))
+      : fe.liner_vm_inner.map((v, i) => Math.max(v, fe.liner_vm_outer[i] ?? v));
+  let max = 0;
+  let hi = 0;
+  values.forEach((v, i) => {
+    if (v == null || !Number.isFinite(v)) return;
+    max = Math.max(max, v);
+    const rb = fe.z[i] < 0 ? liner.boss_radius_a : liner.boss_radius_b;
+    if (fe.r[i] > rb + 3 * liner.wall_thickness) hi = Math.max(hi, v);
+  });
+  if (!(hi > 0)) hi = max > 0 ? max : 1;
+  return { values, hi, max, clipped: max > hi * 1.001 };
+}
 
 function cssVar(name: string, fallback: string): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -22,6 +63,9 @@ export function Viewport() {
   const { result, resultProject, loading } = useAnalysis();
   const ui = useUi();
   const simMode = ui.step === 'simulate';
+  const thkMode = ui.step === 'thickness';
+  const feMode = ui.step === 'analysis';
+  const thkScale = useThicknessScale();
   // Geometry must match the analysis result; before the first result the
   // current inputs drive a rough preview.
   const geomSrc = result && resultProject ? resultProject : project;
@@ -65,9 +109,46 @@ export function Viewport() {
     viewer.current?.setVessel({ analysis: result, liner: geomSrc.liner, layers: geomSrc.layers });
   }, [result, geomSrc.liner, geomSrc.layers]);
 
+  // Surface overlays: thickness map on its layer (Thickness step) or shell FE along z (Analysis step).
+  const thk = ui.thk;
+  const thkOverlay = useMemo<SurfaceOverlay | null>(() => {
+    if (!thkMode || !thk || !thkScale || !ui.overlay.thk3d) return null;
+    if (!result?.layers.some((l) => l.id === thk.layer_id)) return null;
+    return { type: 'map', map: thk, color: thkScale.color };
+  }, [thkMode, thk, thkScale, ui.overlay.thk3d, result]);
+  const fe = result?.fe ?? null;
+  const feKind = ui.overlay.fe;
+  const feLiner = geomSrc.liner;
+  const feData = useMemo(
+    () => (fe && feKind !== 'none' ? feOverlayData(fe, feKind, feLiner) : null),
+    [fe, feKind, feLiner],
+  );
+  const feOverlay = useMemo<SurfaceOverlay | null>(() => {
+    if (!feMode || !fe || !feData) return null;
+    const { hi } = feData;
+    return { type: 'z', z: fe.z, values: feData.values, color: (v: number) => viridis(v / hi) };
+  }, [feMode, fe, feData]);
+  const overlay = thkOverlay ?? feOverlay;
   useEffect(() => {
-    viewer.current?.setSelectedLayer(ui.step === 'layup' ? ui.selectedLayerId : null);
-  }, [ui.selectedLayerId, ui.step]);
+    viewer.current?.setOverlay(overlay);
+  }, [overlay]);
+
+  const { deform, deformScale } = ui.overlay;
+  const deformation = useMemo<Deformation | null>(
+    () =>
+      feMode && fe && deform && deformScale > 0
+        ? { z: fe.node_z, ur: fe.radial_displacement, uz: fe.axial_displacement, scale: deformScale }
+        : null,
+    [feMode, fe, deform, deformScale],
+  );
+  useEffect(() => {
+    viewer.current?.setDeformation(deformation);
+  }, [deformation]);
+
+  useEffect(() => {
+    const highlight = ui.step === 'layup' || (ui.step === 'thickness' && !thkOverlay);
+    viewer.current?.setSelectedLayer(highlight ? ui.selectedLayerId : null);
+  }, [ui.selectedLayerId, ui.step, thkOverlay]);
 
   useEffect(() => {
     // While simulating a layer, show the vessel as it is before that layer is wound.
@@ -168,6 +249,82 @@ export function Viewport() {
         ) : null}
       </div>
       {simMode && coloring ? <ColorLegend c={coloring} /> : null}
+      {thkOverlay && thk && thkScale ? (
+        <ScaleLegend
+          title={`Thickness ${thk.cumulative ? `up to ${thk.layer_id}` : `of ${thk.layer_id}`} [mm]`}
+          fn={viridis}
+          lo="0"
+          hi={`${thkScale.clipped ? '≥ ' : ''}${sig(thkScale.hi, 3)}`}
+          notes={
+            <>
+              {ui.overlay.thkScale === 'nominal' ? (
+                <div className="cl-range">nominal {sig(thk.nominal, 3)} mm at mid-scale</div>
+              ) : null}
+              {thkScale.clipped ? (
+                <div className="cl-range">map max {sig(thkScale.max, 3)} mm (above scale)</div>
+              ) : null}
+              {thkScale.nodata ? (
+                <div className="cl-range">
+                  <i className="sw" style={{ background: NODATA_CSS }} /> no data
+                </div>
+              ) : null}
+            </>
+          }
+        />
+      ) : null}
+      {feOverlay && feData && fe ? (
+        <ScaleLegend
+          title={feKind === 'fiber' ? 'Fibre utilisation ε/ε_ult @ MEOP' : 'Liner von Mises @ MEOP [MPa]'}
+          fn={viridis}
+          lo="0"
+          hi={`${feData.clipped ? '≥ ' : ''}${sig(feData.hi, 3)}`}
+          notes={
+            <>
+              <div className="cl-range">
+                {feKind === 'fiber'
+                  ? `critical ${fe.critical_layer ?? '–'} at z = ${sig(fe.critical_z, 4)} mm`
+                  : `hot spot ×${sig(fe.liner_hotspot_factor, 3)} at z = ${sig(fe.liner_hotspot_z, 4)} mm`}
+              </div>
+              {feData.clipped ? (
+                <div className="cl-range" title="Rigid-ring boss clamp: excluded from the FE evaluation">
+                  boss clamp zone above scale (max {sig(feData.max, 3)})
+                </div>
+              ) : null}
+            </>
+          }
+        />
+      ) : null}
+      {feMode && deformation ? (
+        <div className="deform-badge" title="Displacements at MEOP, magnified; dashed: undeformed outer surface">
+          Deformed ×{sig(deformation.scale, 3)} · MEOP
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ScaleLegend({
+  title,
+  fn,
+  lo,
+  hi,
+  notes,
+}: {
+  title: string;
+  fn: (t: number) => Rgb;
+  lo: string;
+  hi: string;
+  notes?: ReactNode;
+}) {
+  return (
+    <div className="color-legend" role="img" aria-label={`${title}: colour scale ${lo} to ${hi}`}>
+      <div className="cl-title">{title}</div>
+      <div className="cl-bar" style={{ background: cssGradient(fn) }} />
+      <div className="cl-scale">
+        <span>{lo}</span>
+        <span>{hi}</span>
+      </div>
+      {notes}
     </div>
   );
 }

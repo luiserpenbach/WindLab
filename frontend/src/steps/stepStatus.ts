@@ -1,16 +1,17 @@
-import type { AnalysisResult, Check, SimulationResult, Status } from '../api/types';
+import type { AnalysisResult, Check, SimulationResult, Status, ThicknessMapResult } from '../api/types';
 import type { StepId } from '../state/uiStore';
 import { worstStatus } from '../state/analysis';
 
 /**
  * Check ids are namespaced by the backend (core/design.py): `geo.*`,
- * `layer.<id>`, `layup.*`, `burst*`, `sr.*`, `af.*`, `liner.*`, `fatigue`,
- * `dome.*`, `fe.*` (shell FE). Known prefixes are routed explicitly; anything else falls back to
- * keyword matching, then to "analysis".
+ * `layer.<id>[.slip|.path]`, `layup.*` (e.g. `layup.bridging`), `tension.*`,
+ * `burst*`, `sr.*`, `af.*`, `liner.*`, `fatigue`, `dome.*`, `fe.*` (shell FE).
+ * Known prefixes are routed explicitly; anything else falls back to keyword
+ * matching, then to "analysis".
  */
 const PREFIX: [StepId, RegExp][] = [
   ['vessel', /^(geo|liner|af|fatigue)(\.|$)/],
-  ['layup', /^(layer|layup|dome|pattern)(\.|$)/],
+  ['layup', /^(layer|layup|dome|pattern|tension)(\.|$)/],
   ['materials', /^(mat|material|composite)(\.|$)/],
   ['machine', /^(machine|mach|axis|kin)(\.|$)/],
   ['analysis', /^(burst|sr|mass|fe)(\.|$)/],
@@ -33,7 +34,26 @@ export function checksForStep(checks: Check[], step: StepId): Check[] {
   return checks.filter((c) => stepOfCheck(c) === step);
 }
 
-export function stepStatus(step: StepId, result: AnalysisResult | null, sim: SimulationResult | null): Status | null {
+/** Thresholds the backend uses for its thickness-map warnings. */
+export const THK_GAP_WARN = 0.005;
+export const THK_OVERLAP_WARN = 0.05;
+export const THK_PEAK_WARN = 1.25;
+
+/** Status of a band-level thickness map: warn on backend warnings or gaps/overlaps. */
+export function thicknessStatus(t: ThicknessMapResult | null): Status | null {
+  if (!t) return null;
+  if (t.peak == null || t.t.some((row) => row.some((v) => v == null))) return 'warn';
+  if (t.warnings.length) return 'warn';
+  if (t.gap_fraction > THK_GAP_WARN || t.overlap_fraction > THK_OVERLAP_WARN) return 'warn';
+  return 'ok';
+}
+
+export function stepStatus(
+  step: StepId,
+  result: AnalysisResult | null,
+  sim: SimulationResult | null,
+  thk: ThicknessMapResult | null = null,
+): Status | null {
   if (!result) return null;
   const checks = result.checks;
   switch (step) {
@@ -54,6 +74,8 @@ export function stepStatus(step: StepId, result: AnalysisResult | null, sim: Sim
       if (result.layers.some((l) => l.warnings.length)) statuses.push('warn');
       return worstStatus(statuses) ?? 'ok';
     }
+    case 'thickness':
+      return thicknessStatus(thk);
     case 'analysis':
       return worstStatus(checks) ?? (result.structural ? 'ok' : 'info');
     case 'simulate':

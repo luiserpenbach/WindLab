@@ -1,8 +1,17 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { AnalysisResult, Curve, LinerSpec, MachineSpec, PathResult, SimulationResult } from '../api/types';
+import type {
+  AnalysisResult,
+  Curve,
+  LinerSpec,
+  MachineSpec,
+  PathResult,
+  SimulationResult,
+  ThicknessMapResult,
+} from '../api/types';
 import { frameIndexAt } from '../state/playback';
 import { layerColors } from './colors';
+import { NODATA_RGB, type Rgb } from './colormaps';
 
 /*
  * World frame: x = vessel axis (part frame z, 0 = cylinder mid-plane),
@@ -49,6 +58,63 @@ interface SimVisual {
 }
 
 const FIBRE_COLOR = '#e34948';
+
+/**
+ * Colour painted on the outer vessel surface.
+ * - `z`: a quantity along the axis (shell FE), as lathe vertex colours.
+ * - `map`: a band-level thickness map as a texture on one layer's surface
+ *   (u = phi, v = liner meridian arclength); layers after it are hidden.
+ */
+export type SurfaceOverlay =
+  | { type: 'z'; z: number[]; values: (number | null)[]; color: (v: number) => Rgb }
+  | { type: 'map'; map: ThicknessMapResult; color: (v: number) => Rgb };
+
+/** Nodal displacements (shell FE) drawn magnified by `scale`. */
+export interface Deformation {
+  z: number[];
+  ur: number[];
+  uz: number[];
+  scale: number;
+}
+
+/** Linear interpolation on ascending x, clamped at the ends. */
+function interpAsc(x: ArrayLike<number>, y: ArrayLike<number>, v: number): number {
+  const n = x.length;
+  if (!n) return 0;
+  if (v <= x[0]) return y[0];
+  if (v >= x[n - 1]) return y[n - 1];
+  let lo = 0;
+  let hi = n - 1;
+  while (hi - lo > 1) {
+    const m = (lo + hi) >> 1;
+    if (x[m] <= v) lo = m;
+    else hi = m;
+  }
+  const dx = x[hi] - x[lo];
+  return dx ? y[lo] + ((y[hi] - y[lo]) * (v - x[lo])) / dx : y[lo];
+}
+
+/** Cumulative chord length of a (z, r) curve. */
+function arcLength(c: Curve): Float64Array {
+  const s = new Float64Array(c.x.length);
+  for (let i = 1; i < c.x.length; i++) s[i] = s[i - 1] + Math.hypot(c.x[i] - c.x[i - 1], c.y[i] - c.y[i - 1]);
+  return s;
+}
+
+/** Every k-th point of a curve (keeping the last), at most `maxPts`. */
+function strideIndices(n: number, maxPts: number): number[] {
+  const k = Math.max(1, Math.ceil(n / maxPts));
+  const out: number[] = [];
+  for (let i = 0; i < n; i += k) out.push(i);
+  if (out[out.length - 1] !== n - 1) out.push(n - 1);
+  return out;
+}
+
+const _col = new THREE.Color();
+function toLinear(rgb: Rgb): [number, number, number] {
+  _col.setRGB(rgb[0], rgb[1], rgb[2], THREE.SRGBColorSpace);
+  return [_col.r, _col.g, _col.b];
+}
 
 /**
  * Map every contact point of a simulation to the nearest point of the fibre
@@ -183,6 +249,42 @@ function latheX(pts: THREE.Vector2[], section: boolean): THREE.BufferGeometry {
   return g;
 }
 
+/**
+ * Lathe with texture coordinates u = map azimuth / 2pi and v = `vs[j]` per
+ * profile point. The map azimuth phi_m of a path point is y = r cos phi_m,
+ * z = -r sin phi_m (see PathResult); the lathe puts y = -r sin phi_L,
+ * z = r cos phi_L after rotating about z, so phi_m = -phi_L - pi/2.
+ */
+function latheXMapped(pts: THREE.Vector2[], vs: number[], section: boolean): THREE.BufferGeometry {
+  const segs = section ? SEG / 2 : SEG;
+  const start = section ? PHI_SECTION_START : 0;
+  const len = section ? Math.PI : Math.PI * 2;
+  const g = latheX(pts, section);
+  const uv = g.getAttribute('uv') as THREE.BufferAttribute;
+  const n = pts.length;
+  for (let i = 0; i <= segs; i++) {
+    const phiL = start + (i / segs) * len;
+    const u = (-phiL - Math.PI / 2) / (2 * Math.PI);
+    for (let j = 0; j < n; j++) uv.setXY(i * n + j, u, vs[j]);
+  }
+  uv.needsUpdate = true;
+  return g;
+}
+
+/** Per-vertex colours for a lathe from one colour per profile point. */
+function setLatheColors(g: THREE.BufferGeometry, rgb: [number, number, number][]) {
+  const n = rgb.length;
+  const count = (g.getAttribute('position') as THREE.BufferAttribute).count;
+  const col = new Float32Array(count * 3);
+  for (let k = 0; k < count; k++) {
+    const c = rgb[k % n];
+    col[k * 3] = c[0];
+    col[k * 3 + 1] = c[1];
+    col[k * 3 + 2] = c[2];
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+}
+
 function makeTextSprite(text: string, color: string): THREE.Sprite {
   const c = document.createElement('canvas');
   c.width = 64;
@@ -234,6 +336,9 @@ export class VesselViewer {
   private pathColors: Float32Array | null = null;
   private currentTime = 0;
   private hasFitted = false;
+  private overlay: SurfaceOverlay | null = null;
+  private deformation: Deformation | null = null;
+  private mapTexture: { map: ThicknessMapResult; color: (v: number) => Rgb; tex: THREE.DataTexture } | null = null;
   private theme: ViewerTheme = { background: '#f4f4f2', grid: '#d8d7d0', gridCenter: '#b8b7ae', text: '#333' };
 
   constructor(host: HTMLElement) {
@@ -306,6 +411,20 @@ export class VesselViewer {
   setLayerCutoff(id: string | null) {
     if (id === this.layerCutoff) return;
     this.layerCutoff = id;
+    this.rebuildVessel();
+  }
+
+  /** Paint the outer surface (FE along z) or one layer surface (thickness map). */
+  setOverlay(o: SurfaceOverlay | null) {
+    if (o === this.overlay) return;
+    this.overlay = o;
+    this.rebuildVessel();
+  }
+
+  /** Show the vessel deformed by the FE displacements (null = undeformed). */
+  setDeformation(d: Deformation | null) {
+    if (d === this.deformation) return;
+    this.deformation = d;
     this.rebuildVessel();
   }
 
@@ -436,6 +555,7 @@ export class VesselViewer {
     cancelAnimationFrame(this.frame);
     this.ro.disconnect();
     this.controls.dispose();
+    this.mapTexture?.tex.dispose();
     disposeTree(this.scene);
     disposeTree(this.gizmoScene);
     this.renderer.dispose();
@@ -590,6 +710,123 @@ export class VesselViewer {
     geo.dispose();
   }
 
+  /** Texture of a thickness map (rows = map rows along s, columns = phi), cached per map. */
+  private thicknessTexture(map: ThicknessMapResult, color: (v: number) => Rgb): THREE.DataTexture | null {
+    const c = this.mapTexture;
+    if (c && c.map === map && c.color === color) return c.tex;
+    c?.tex.dispose();
+    this.mapTexture = null;
+    const rows = map.t.length;
+    const cols = rows ? map.t[0].length : 0;
+    if (!rows || !cols) return null;
+    const data = new Uint8Array(rows * cols * 4);
+    for (let i = 0; i < rows; i++) {
+      const row = map.t[i];
+      for (let j = 0; j < cols; j++) {
+        const v = row[j];
+        const rgb = v == null || !Number.isFinite(v) ? NODATA_RGB : color(v);
+        const o = (i * cols + j) * 4;
+        data[o] = Math.round(rgb[0] * 255);
+        data[o + 1] = Math.round(rgb[1] * 255);
+        data[o + 2] = Math.round(rgb[2] * 255);
+        data[o + 3] = 255;
+      }
+    }
+    const tex = new THREE.DataTexture(data, cols, rows, THREE.RGBAFormat, THREE.UnsignedByteType);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    tex.needsUpdate = true;
+    this.mapTexture = { map, color, tex };
+    return tex;
+  }
+
+  /** Displace a (z, r) curve by the magnified FE displacements. */
+  private deformCurve(c: Curve): Curve {
+    const d = this.deformation;
+    if (!d || !d.scale || !d.z.length) return c;
+    // remove the rigid-body axial shift: z = 0 stays put
+    const uz0 = interpAsc(d.z, d.uz, 0);
+    const x = new Array<number>(c.x.length);
+    const y = new Array<number>(c.y.length);
+    for (let i = 0; i < c.x.length; i++) {
+      const z = c.x[i];
+      x[i] = z + d.scale * (interpAsc(d.z, d.uz, z) - uz0);
+      y[i] = Math.max(0, c.y[i] + d.scale * interpAsc(d.z, d.ur, z));
+    }
+    return { x, y };
+  }
+
+  /** Axial shift of a vessel end (bosses move with the dome they close). */
+  private deformShift(z: number): number {
+    const d = this.deformation;
+    if (!d || !d.scale || !d.z.length) return 0;
+    return d.scale * (interpAsc(d.z, d.uz, z) - interpAsc(d.z, d.uz, 0));
+  }
+
+  /**
+   * Lathe of the painted surface: vertex colours (FE along z) or the thickness
+   * texture. `surface` is the undeformed curve; `drawn` the curve to draw.
+   */
+  private overlayMesh(surface: Curve, drawn: Curve, linerOuter: Curve | null): THREE.Mesh | null {
+    const o = this.overlay;
+    if (!o) return null;
+    const idx = strideIndices(drawn.x.length, 420);
+    const pts = idx.map((i) => new THREE.Vector2(Math.max(0, drawn.y[i]), drawn.x[i]));
+    if (pts.length < 2) return null;
+    // pulled towards the camera: the painted surface can coincide with the one below (zero thickness)
+    const matOpts: THREE.MeshStandardMaterialParameters = {
+      color: '#ffffff',
+      side: THREE.DoubleSide,
+      metalness: 0.05,
+      roughness: 0.75,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -4,
+    };
+    if (o.type === 'z') {
+      const g = latheX(pts, this.section);
+      const neutral = toLinear(NODATA_RGB);
+      const zs = o.z;
+      const vals = o.values;
+      const rgb = idx.map((i) => {
+        const z = surface.x[i];
+        // nearest element value (the FE arrays are dense)
+        let lo = 0;
+        let hi = zs.length - 1;
+        if (hi < 0) return neutral;
+        while (hi - lo > 1) {
+          const m = (lo + hi) >> 1;
+          if (zs[m] <= z) lo = m;
+          else hi = m;
+        }
+        const k = Math.abs(zs[hi] - z) < Math.abs(zs[lo] - z) ? hi : lo;
+        const v = vals[k];
+        return v == null || !Number.isFinite(v) ? neutral : toLinear(o.color(v));
+      });
+      setLatheColors(g, rgb);
+      return new THREE.Mesh(g, new THREE.MeshStandardMaterial({ ...matOpts, vertexColors: true }));
+    }
+    // thickness map: v from the liner arclength of the shared profile index
+    const map = o.map;
+    const tex = this.thicknessTexture(map, o.color);
+    if (!tex || !linerOuter || map.s.length < 2) return null;
+    const sL = arcLength(linerOuter);
+    const shared = linerOuter.x.length === surface.x.length;
+    const rows = map.s.length;
+    const rowIdx = map.s.map((_, i) => i);
+    const vs = idx.map((i) => {
+      const s = shared ? sL[i] : interpAsc(linerOuter.x, sL, surface.x[i]);
+      return (interpAsc(map.s, rowIdx, s) + 0.5) / rows;
+    });
+    const g = latheXMapped(pts, vs, this.section);
+    return new THREE.Mesh(g, new THREE.MeshStandardMaterial({ ...matOpts, map: tex }));
+  }
+
   private rebuildVessel() {
     clearGroup(this.staticGroup);
     this.layerMeshes.clear();
@@ -605,10 +842,24 @@ export class VesselViewer {
       outer = fb.outer;
       inner = fb.inner;
     }
+    const outer0 = outer;
     const zs = outer.x;
     const zMin = Math.min(...zs);
     const zMax = Math.max(...zs);
     this.maxR = Math.max(...outer.y, liner.radius);
+    const overlay = a ? this.overlay : null;
+    const deformed = !!(this.deformation && this.deformation.scale);
+    outer = this.deformCurve(outer);
+    if (inner) inner = this.deformCurve(inner);
+
+    // Painted surface: the thickness-map layer, else the outermost shown layer, else the liner.
+    const mapLayer = overlay?.type === 'map' ? overlay.map.layer_id : null;
+    const layersAll = a?.layers ?? [];
+    const cutIdx = this.layerCutoff ? layersAll.findIndex((l) => l.id === this.layerCutoff) : -1;
+    const mapIdx = mapLayer ? layersAll.findIndex((l) => l.id === mapLayer) : -1;
+    const shown = mapIdx >= 0 ? layersAll.slice(0, mapIdx + 1) : cutIdx >= 0 ? layersAll.slice(0, cutIdx) : layersAll;
+    const drawLayers = !!a && (this.showLayers || mapIdx >= 0);
+    const paintLiner = !!overlay && overlay.type === 'z' && (!drawLayers || !shown.length);
 
     // ---- liner (closed wall profile: outer A->B, inner B->A)
     const linerMat = this.material('#a9aeb6', { metalness: 0.55, roughness: 0.38 });
@@ -616,8 +867,14 @@ export class VesselViewer {
     const innerPts = inner ? curveToPoints(inner) : [];
     const wall = [...outerPts, ...[...innerPts].reverse()];
     if (wall.length > 2) wall.push(wall[0].clone());
-    const linerMesh = new THREE.Mesh(latheX(wall.length > 2 ? wall : outerPts, this.section), linerMat);
-    this.staticGroup.add(linerMesh);
+    const linerPainted = paintLiner ? this.overlayMesh(outer0, outer, a?.liner_outer ?? null) : null;
+    if (linerPainted) {
+      this.staticGroup.add(linerPainted);
+      if (inner) this.staticGroup.add(new THREE.Mesh(latheX(curveToPoints(inner), this.section), linerMat));
+    } else {
+      const linerMesh = new THREE.Mesh(latheX(wall.length > 2 ? wall : outerPts, this.section), linerMat);
+      this.staticGroup.add(linerMesh);
+    }
     if (this.section && inner) {
       const capMat = this.material('#8d939c', { metalness: 0.4, roughness: 0.5 });
       const poly: [number, number][] = [
@@ -628,8 +885,8 @@ export class VesselViewer {
     }
 
     // ---- bosses and shaft
-    const rA = outer.y[zs[0] <= zs[zs.length - 1] ? 0 : zs.length - 1];
-    const rB = outer.y[zs[0] <= zs[zs.length - 1] ? zs.length - 1 : 0];
+    const rA = outer0.y[zs[0] <= zs[zs.length - 1] ? 0 : zs.length - 1];
+    const rB = outer0.y[zs[0] <= zs[zs.length - 1] ? zs.length - 1 : 0];
     const bossMat = this.material('#7d848f', { metalness: 0.6, roughness: 0.35 });
     const shaftMat = this.material('#5b6069', { metalness: 0.7, roughness: 0.3 });
     const bl = Math.max(liner.boss_length, 4);
@@ -655,8 +912,10 @@ export class VesselViewer {
           mat,
         );
     };
-    cyl(bossA, zMin - bl, zMin + Math.min(8, (zMax - zMin) * 0.05), bossMat);
-    cyl(bossB, zMax - Math.min(8, (zMax - zMin) * 0.05), zMax + bl, bossMat);
+    const dA = this.deformShift(zMin);
+    const dB = this.deformShift(zMax);
+    cyl(bossA, zMin - bl + dA, zMin + Math.min(8, (zMax - zMin) * 0.05) + dA, bossMat);
+    cyl(bossB, zMax - Math.min(8, (zMax - zMin) * 0.05) + dB, zMax + bl + dB, bossMat);
     const shaftExt = Math.max(60, this.maxR * 0.8);
     const s0 = zMin - bl - shaftExt;
     const s1 = zMax + bl + shaftExt;
@@ -664,11 +923,11 @@ export class VesselViewer {
     this.span = [s0, s1];
 
     // ---- layers
-    // `layerCutoff`: show only the layers wound before this one (simulation).
-    if (a && this.showLayers) {
+    // `layerCutoff`: show only the layers wound before this one (simulation);
+    // a thickness-map overlay shows the layers up to and including its layer.
+    let outerMost: Curve = outer0;
+    if (a && drawLayers) {
       const colors = layerColors(d.layers.length ? d.layers : a.layers);
-      const cutIdx = this.layerCutoff ? a.layers.findIndex((l) => l.id === this.layerCutoff) : -1;
-      const shown = cutIdx >= 0 ? a.layers.slice(0, cutIdx) : a.layers;
       let prev: Curve = outer;
       const n = shown.length;
       shown.forEach((lr, idx) => {
@@ -676,29 +935,37 @@ export class VesselViewer {
         const meshes: THREE.Object3D[] = [];
         if (lr.surface.x.length > 1) {
           const isOuter = idx === n - 1;
-          // Section: only the outermost surface is drawn (inner ones are hidden
-          // behind it anyway) and every layer shows as a filled cap.
-          // Full view: inner layers faint, outermost semi-transparent.
-          if (!this.section || isOuter) {
+          const surf = deformed ? this.deformCurve(lr.surface) : lr.surface;
+          const painted = isOuter && overlay ? this.overlayMesh(lr.surface, surf, a.liner_outer) : null;
+          if (painted) {
+            painted.renderOrder = 1 + idx;
+            this.staticGroup.add(painted);
+            meshes.push(painted);
+          } else if (!this.section || isOuter) {
+            // Section: only the outermost surface is drawn (inner ones are hidden
+            // behind it anyway) and every layer shows as a filled cap.
+            // Full view: inner layers faint, outermost semi-transparent (hidden
+            // behind an opaque painted surface).
             const mat = this.material(color, {
               transparent: !this.section,
-              opacity: this.section ? 1 : isOuter ? 0.5 : 0.1,
+              opacity: this.section ? 1 : isOuter ? 0.5 : overlay ? 0 : 0.1,
               depthWrite: this.section,
               roughness: 0.7,
             });
-            const m = new THREE.Mesh(latheX(curveToPoints(lr.surface), this.section), mat);
+            const m = new THREE.Mesh(latheX(curveToPoints(surf), this.section), mat);
             m.renderOrder = 1 + idx;
             m.userData.baseOpacity = mat.opacity;
+            m.visible = mat.opacity > 0;
             this.staticGroup.add(m);
             meshes.push(m);
           }
           if (this.section) {
             const top: [number, number][] = [];
             const bot: [number, number][] = [];
-            for (let i = 0; i < lr.surface.x.length; i++) {
-              const z = lr.surface.x[i];
+            for (let i = 0; i < surf.x.length; i++) {
+              const z = surf.x[i];
               const rp = interpCurve(prev, z);
-              top.push([z, Math.max(lr.surface.y[i], rp)]);
+              top.push([z, Math.max(surf.y[i], rp)]);
               bot.push([z, rp]);
             }
             const capMat = this.material(color, {
@@ -709,11 +976,41 @@ export class VesselViewer {
             });
             this.addCap(this.staticGroup, [...top, ...bot.reverse()], capMat, meshes);
           }
-          prev = lr.surface;
+          prev = surf;
+          outerMost = lr.surface;
         }
         this.layerMeshes.set(lr.id, meshes);
       });
       this.maxR = Math.max(this.maxR, ...a.layers.flatMap((l) => l.surface.y));
+    }
+
+    // ---- undeformed outline when the deformed shape is shown
+    if (deformed) {
+      const pos: number[] = [];
+      const idx = strideIndices(outerMost.x.length, 400);
+      for (const sgn of [1, -1]) {
+        for (let k = 0; k < idx.length - 1; k++) {
+          const i = idx[k];
+          const j = idx[k + 1];
+          pos.push(outerMost.x[i], sgn * outerMost.y[i], 0.5, outerMost.x[j], sgn * outerMost.y[j], 0.5);
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      const ghost = new THREE.LineSegments(
+        g,
+        new THREE.LineDashedMaterial({
+          color: this.theme.text,
+          dashSize: 4,
+          gapSize: 3,
+          transparent: true,
+          opacity: 0.85,
+          depthTest: false,
+        }),
+      );
+      ghost.computeLineDistances();
+      ghost.renderOrder = 50;
+      this.staticGroup.add(ghost);
     }
 
     // ---- rotating index marks (make mandrel rotation visible)

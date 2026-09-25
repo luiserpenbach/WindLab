@@ -12,6 +12,10 @@ import type {
   ProjectListEntry,
   SimulationResult,
   SuggestLayupResponse,
+  TensionScheduleRequest,
+  TensionScheduleResult,
+  ThicknessMapRequest,
+  ThicknessMapResult,
   TravellerResponse,
 } from './types';
 
@@ -118,6 +122,10 @@ export const api = {
   suggestLayup: (p: Project, s?: AbortSignal) => request<SuggestLayupResponse>('POST', '/suggest-layup', p, s),
   path: (r: LayerRequest, s?: AbortSignal) => request<PathResult>('POST', '/path', r, s),
   simulate: (r: LayerRequest, s?: AbortSignal) => request<SimulationResult>('POST', '/simulate', r, s),
+  thicknessMap: (r: ThicknessMapRequest, s?: AbortSignal) =>
+    request<ThicknessMapResult>('POST', '/thickness-map', r, s),
+  tensionSchedule: (r: TensionScheduleRequest, s?: AbortSignal) =>
+    request<TensionScheduleResult>('POST', '/tension-schedule', r, s),
   gcode: (project: Project, layer_ids: string[] | null, s?: AbortSignal) =>
     request<GcodeResponse>('POST', '/gcode', { project, layer_ids }, s),
   traveller: (p: Project, s?: AbortSignal) => request<TravellerResponse>('POST', '/traveller', p, s),

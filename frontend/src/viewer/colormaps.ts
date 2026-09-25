@@ -95,11 +95,12 @@ export const DWELL_COLOR = '#9aa0a8';
  * Per-point colours for a fibre path. Returns null for "layer" mode or when
  * the path carries no per-point data for the requested quantity.
  *
- * `dwellCut`: the path samples a dwell on the turnaround circle (alpha = 90°)
- * with the slippage such a dwell would need. That value is informational (the
- * dwell really happens on the boss neck), so in slippage mode points at 90°
- * whose |slippage| exceeds `dwellCut` (the dome slippage) are drawn neutral
- * and left out of min/max.
+ * Dwell arcs on the turnaround circle carry the slippage such a dwell would
+ * need. That value is informational (the dwell really happens on the boss
+ * neck), so in slippage mode dwell points are drawn neutral and left out of
+ * min/max. The backend flags them in `PathResult.dwell`; for older backends
+ * without the flags, `dwellCut` (the dome slippage) is used to infer them:
+ * points at 90° whose |slippage| exceeds it.
  */
 export function colorPath(
   path: PathResult | null,
@@ -111,16 +112,17 @@ export function colorPath(
   const n = path.points.length;
   const src = mode === 'alpha' ? path.alpha : path.slippage;
   if (!src || src.length !== n || n < 2) return null;
-  const alpha = path.alpha?.length === n ? path.alpha : null;
   const dwell = new Uint8Array(n);
   let dwellPoints = 0;
-  if (mode === 'slip' && dwellCut != null && alpha) {
-    for (let i = 0; i < n; i++) {
-      if (alpha[i] >= 89.999 && Math.abs(src[i]) > dwellCut) {
-        dwell[i] = 1;
-        dwellPoints++;
-      }
+  if (mode === 'slip') {
+    const flags = path.dwell;
+    if (flags && flags.length === n) {
+      for (let i = 0; i < n; i++) if (flags[i]) dwell[i] = 1;
+    } else if (dwellCut != null && path.alpha?.length === n) {
+      const alpha = path.alpha;
+      for (let i = 0; i < n; i++) if (alpha[i] >= 89.999 && Math.abs(src[i]) > dwellCut) dwell[i] = 1;
     }
+    for (let i = 0; i < n; i++) dwellPoints += dwell[i];
   }
   const vals = mode === 'alpha' ? src : src.map((l) => utilisation(l, friction));
   let min = Infinity;
@@ -157,4 +159,35 @@ export function colorPath(
     colors[i * 3 + 2] = b;
   }
   return { mode, colors, min, max, domain, dwellPoints };
+}
+
+/** 8-bit RGBA lookup table (n entries) sampling `fn` over 0..1. */
+export function colorLut(fn: (t: number) => Rgb, n = 256): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(n * 4);
+  for (let i = 0; i < n; i++) {
+    const [r, g, b] = fn(i / (n - 1));
+    out[i * 4] = r * 255;
+    out[i * 4 + 1] = g * 255;
+    out[i * 4 + 2] = b * 255;
+    out[i * 4 + 3] = 255;
+  }
+  return out;
+}
+
+/** Neutral colour for cells without a value (non-finite results). */
+export const NODATA_RGB: Rgb = hex('#9aa0a8');
+
+/**
+ * Value domain for a sequential colour scale: [0, hi] where hi is the maximum
+ * or, for `robust`, the 99.5th percentile of the finite values (single hot
+ * cells at the poles would otherwise wash out the whole map).
+ */
+export function scaleDomain(values: Iterable<number | null>, robust: boolean): { hi: number; max: number } {
+  const v: number[] = [];
+  for (const x of values) if (x != null && Number.isFinite(x)) v.push(x);
+  if (!v.length) return { hi: 1, max: 0 };
+  v.sort((a, b) => a - b);
+  const max = v[v.length - 1];
+  const hi = robust ? v[Math.min(v.length - 1, Math.floor(0.995 * (v.length - 1)))] : max;
+  return { hi: hi > 0 ? hi : max > 0 ? max : 1, max };
 }

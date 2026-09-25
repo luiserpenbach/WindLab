@@ -1,17 +1,18 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { PathResult, SimulationResult } from '../api/types';
+import type { PathResult, SimulationResult, ThicknessMapResult } from '../api/types';
 import type { PathColorMode } from '../viewer/colormaps';
 
-export type StepId = 'vessel' | 'materials' | 'layup' | 'analysis' | 'machine' | 'simulate' | 'export';
+export type StepId = 'vessel' | 'materials' | 'layup' | 'thickness' | 'analysis' | 'machine' | 'simulate' | 'export';
 
 export const STEPS: { id: StepId; n: number; label: string }[] = [
   { id: 'vessel', n: 1, label: 'Vessel' },
   { id: 'materials', n: 2, label: 'Materials' },
   { id: 'layup', n: 3, label: 'Layup' },
-  { id: 'analysis', n: 4, label: 'Analysis' },
-  { id: 'machine', n: 5, label: 'Machine' },
-  { id: 'simulate', n: 6, label: 'Simulate' },
-  { id: 'export', n: 7, label: 'Export' },
+  { id: 'thickness', n: 4, label: 'Thickness' },
+  { id: 'analysis', n: 5, label: 'Analysis' },
+  { id: 'machine', n: 6, label: 'Machine' },
+  { id: 'simulate', n: 7, label: 'Simulate' },
+  { id: 'export', n: 8, label: 'Export' },
 ];
 
 export type ThemePref = 'system' | 'light' | 'dark';
@@ -20,6 +21,26 @@ export interface ViewOptions {
   section: boolean;
   showLayers: boolean;
   showGrid: boolean;
+}
+
+/** Shell-FE quantity painted on the outer vessel surface (Analysis step). */
+export type FeOverlay = 'none' | 'fiber' | 'liner';
+/**
+ * Thickness colour-scale upper end: twice the nominal thickness (nominal sits
+ * mid-scale), the 99.5th percentile, or the full maximum.
+ */
+export type ThkScale = 'nominal' | 'robust' | 'full';
+
+export interface OverlayOptions {
+  /** Thickness step: paint the thickness map on the layer surface. */
+  thk3d: boolean;
+  thkScale: ThkScale;
+  /** Analysis step: FE colouring of the outer surface. */
+  fe: FeOverlay;
+  /** Analysis step: exaggerated deformed shape at MEOP. */
+  deform: boolean;
+  /** Displacement magnification. */
+  deformScale: number;
 }
 
 interface UiState {
@@ -40,6 +61,11 @@ interface UiState {
   /** How the fibre path is coloured in the 3D view. */
   pathColor: PathColorMode;
   setPathColor: (m: PathColorMode) => void;
+  /** Last band-level thickness map (Thickness step). */
+  thk: ThicknessMapResult | null;
+  setThk: (t: ThicknessMapResult | null) => void;
+  overlay: OverlayOptions;
+  setOverlay: (patch: Partial<OverlayOptions>) => void;
 }
 
 const Ctx = createContext<UiState | null>(null);
@@ -84,6 +110,14 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const [pathColor, setPathColorState] = useState<PathColorMode>(() =>
     readLS('windlab.pathColor', ['layer', 'alpha', 'slip'] as const, 'layer'),
   );
+  const [thk, setThk] = useState<ThicknessMapResult | null>(null);
+  const [overlay, setOverlayState] = useState<OverlayOptions>(() => ({
+    thk3d: true,
+    thkScale: readLS('windlab.thkScale', ['nominal', 'robust', 'full'] as const, 'nominal'),
+    fe: readLS('windlab.feOverlay', ['none', 'fiber', 'liner'] as const, 'none'),
+    deform: false,
+    deformScale: 100,
+  }));
 
   useEffect(() => {
     const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
@@ -115,6 +149,11 @@ export function UiProvider({ children }: { children: ReactNode }) {
     writeLS('windlab.pathColor', m);
   }, []);
   const setView = useCallback((patch: Partial<ViewOptions>) => setViewState((v) => ({ ...v, ...patch })), []);
+  const setOverlay = useCallback((patch: Partial<OverlayOptions>) => {
+    if (patch.fe) writeLS('windlab.feOverlay', patch.fe);
+    if (patch.thkScale) writeLS('windlab.thkScale', patch.thkScale);
+    setOverlayState((o) => ({ ...o, ...patch }));
+  }, []);
 
   const value = useMemo<UiState>(
     () => ({
@@ -133,6 +172,10 @@ export function UiProvider({ children }: { children: ReactNode }) {
       setSim,
       pathColor,
       setPathColor,
+      thk,
+      setThk,
+      overlay,
+      setOverlay,
     }),
     [
       step,
@@ -147,6 +190,9 @@ export function UiProvider({ children }: { children: ReactNode }) {
       sim,
       pathColor,
       setPathColor,
+      thk,
+      overlay,
+      setOverlay,
     ],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -99,16 +99,67 @@ export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
 }
 
+/**
+ * Split a backend warning "Headline: what it means; what to do" at its first
+ * top-level colon (not inside parentheses) so the headline can be emphasised.
+ */
+export function splitWarning(w: string): [string, string] {
+  let depth = 0;
+  for (let i = 0; i < w.length - 1; i++) {
+    const c = w[i];
+    if (c === '(' || c === '[') depth++;
+    else if (c === ')' || c === ']') depth = Math.max(0, depth - 1);
+    else if (c === ':' && depth === 0 && w[i + 1] === ' ' && i >= 12 && i <= 140) {
+      const rest = w.slice(i + 2).trim();
+      return [w.slice(0, i), rest ? rest[0].toUpperCase() + rest.slice(1) : ''];
+    }
+  }
+  return [w, ''];
+}
+
 export function WarningList({ items }: { items: string[] }) {
   if (!items.length) return null;
   return (
     <ul className="warn-list">
-      {items.map((w, i) => (
-        <li key={i}>
-          <Icon name="alert" size={12} /> <span>{w}</span>
-        </li>
-      ))}
+      {items.map((w, i) => {
+        const [head, rest] = splitWarning(w);
+        return (
+          <li key={i}>
+            <Icon name="alert" size={12} />
+            {rest ? (
+              <span>
+                <strong className="warn-head">{head}</strong>
+                <span className="warn-rest">{rest}</span>
+              </span>
+            ) : (
+              <span>{w}</span>
+            )}
+          </li>
+        );
+      })}
     </ul>
+  );
+}
+
+/** Indeterminate progress bar with elapsed time for long backend calls. */
+export function Progress({ label, elapsed, onCancel }: { label: ReactNode; elapsed: number; onCancel?: () => void }) {
+  return (
+    <div className="progress-row" role="status" aria-live="polite">
+      <div className="progress-main">
+        <div className="progress-label">
+          <span>{label}</span>
+          <span className="muted">{elapsed.toFixed(1)} s</span>
+        </div>
+        <div className="progress" aria-hidden="true">
+          <i />
+        </div>
+      </div>
+      {onCancel ? (
+        <Button size="sm" icon="x" onClick={onCancel}>
+          Cancel
+        </Button>
+      ) : null}
+    </div>
   );
 }
 

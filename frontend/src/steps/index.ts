@@ -6,6 +6,7 @@ import { LayupBottom, LayupPanel } from './LayupStep';
 import { MachinePanel } from './MachineStep';
 import { MaterialsPanel } from './MaterialsStep';
 import { SimulateBottom, SimulatePanel } from './SimulateStep';
+import { ThicknessBottom, ThicknessPanel } from './ThicknessStep';
 import { VesselBottom, VesselPanel } from './VesselStep';
 
 export interface StepView {
@@ -20,6 +21,7 @@ export const STEP_VIEWS: Record<StepId, StepView> = {
   vessel: { Panel: VesselPanel, Bottom: VesselBottom },
   materials: { Panel: MaterialsPanel },
   layup: { Panel: LayupPanel, Bottom: LayupBottom },
+  thickness: { Panel: ThicknessPanel, Bottom: ThicknessBottom },
   analysis: { Panel: AnalysisPanel, Bottom: AnalysisBottom },
   machine: { Panel: MachinePanel },
   simulate: { Panel: SimulatePanel, Bottom: SimulateBottom },

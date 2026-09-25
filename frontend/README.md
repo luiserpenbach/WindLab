@@ -38,11 +38,14 @@ src/
   api/        types.ts (mirrors backend/windlab/schemas.py), client.ts (typed fetch client)
   state/      projectStore (useReducer + undo/redo + localStorage autosave),
               analysis (debounced /api/analyze, catalog data), uiStore (step, theme,
-              selection, path/sim results), playback (simulation clock), defaults
-  components/ fields (NumberInput etc.), ui (buttons, status, modal, KPI),
-              LineChart (SVG chart), TopBar, Stepper, Icon
-  steps/      one panel per workflow step (+ optional bottom chart area), stepStatus
-  viewer/     VesselViewer (three.js scene), Viewport (React wrapper), colors
+              selection, path/sim/thickness-map results, 3D overlay options),
+              thickness (thickness-map colour scale), playback (simulation clock), defaults
+  components/ fields (NumberInput etc.), ui (buttons, status, modal, KPI, progress),
+              LineChart (SVG chart), BarChart (grouped bars), Heatmap (canvas map
+              with SVG axes), TopBar, Stepper, Icon
+  steps/      one panel per workflow step (+ optional bottom chart area), stepStatus,
+              TensionPanel (Layup: winding tension schedule)
+  viewer/     VesselViewer (three.js scene), Viewport (React wrapper), colors, colormaps
   util/       formatting and download helpers
 ```
 
@@ -63,14 +66,34 @@ src/
   separator, and simple arithmetic (`300/2`) is accepted. Out-of-range values
   are flagged and not committed.
 - **Step status dots**: checks are routed to steps by id prefix (`geo`,
-  `liner`, `af`, `fatigue` → Vessel; `layer`, `layup`, `dome` → Layup; all
+  `liner`, `af`, `fatigue` → Vessel; `layer` (incl. `layer.<id>.slip` /
+  `.path`), `layup` (e.g. `layup.bridging`), `tension`, `dome` → Layup; all
   checks → Analysis). The Machine and Simulate dots come from the last
-  simulation's `limits_ok` and warnings.
+  simulation's `limits_ok` and warnings; the Thickness dot from the last
+  thickness map (warn on backend warnings, gaps > 0.5 %, overlaps > 5 % or
+  cells without a value).
+- **Thickness step** (`/api/thickness-map`): band-level build-up of one layer
+  or of all layers up to it. Runs take ~0.5–30 s, show elapsed time and can be
+  cancelled (the fetch is aborted). Results are cached per project and request;
+  changing layer, mode or grid re-runs, project edits only mark the map stale.
+  The map is drawn unrolled (x = z or meridian s, y = φ; several rows in one
+  pixel column show their maximum) and, optionally, as a texture on the
+  layer's surface in the 3D view (u = φ, v = liner meridian arclength via the
+  shared profile index). Colour scale: viridis over 0 – 2 × nominal (default),
+  0 – 99.5th percentile, or 0 – max.
+- **Analysis step, shell FE** (`AnalysisResult.fe`): burst incl. domes and
+  liner hot-spot tiles, fibre-utilisation and liner von Mises charts along z
+  (the rigid-ring boss clamp zone, r < boss + 3 × wall, is shaded and left out
+  of the y range), a 3D surface colouring by either quantity (vertex colours
+  by z) and a magnified deformed shape (auto scale: 10 % of the radius).
+- **Winding tension** (Layup step, `/api/tension-schedule`): residual ply
+  prestress current vs. recommended, recommended tensions per layer, and
+  "Apply recommended tensions" as one undo step (rounded to 0.1 N).
 - **3D view**: the vessel is revolved from `liner_outer`/`liner_inner` and each
   `LayerResult.surface`. The section toggle cuts the vessel in half and draws
   filled cross-sections of the liner wall and each layer. While simulating a
   layer, only the layers wound before it are shown. The mandrel group rotates
   about +x by `frames.mandrel`, and the eye sits at `(carriage, crossfeed, 0)`,
   rotated by `frames.eye` about world y.
-- Keyboard: Alt+1…7 switches steps. In the layer table, Alt+↑/↓ on a layer
+- Keyboard: Alt+1…8 switches steps. In the layer table, Alt+↑/↓ on a layer
   moves it.

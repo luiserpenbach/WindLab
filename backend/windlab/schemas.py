@@ -231,6 +231,7 @@ class Check(BaseModel):
     id: str
     label: str
     status: Status
+    refs: list[str] = Field(default_factory=list, description="Ids of the layers this check refers to")
     value: Optional[float] = None
     limit: Optional[float] = None
     unit: str = ""
@@ -343,6 +344,10 @@ class FEResult(BaseModel):
     node_r: list[float]
     radial_displacement: list[float] = Field(..., description="Nodal radial displacement at MEOP [mm]")
     axial_displacement: list[float]
+    valid: list[bool] = Field(default_factory=list,
+                              description="Elements outside the rigid-boss clamp zone (used for peaks/hot spots)")
+    fiber_ratio_ref: float = Field(0.0, description="Cylinder reference fibre utilisation (burst scaling)")
+    liner_vm_ref: float = Field(0.0, description="Cylinder reference liner stress range (hot-spot factor)")
     dome_burst: float = Field(..., description="Burst estimate including the domes [MPa]")
     critical_z: float
     critical_layer: Optional[str]

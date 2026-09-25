@@ -392,6 +392,51 @@ main.center {
 .bottom-grid.four {
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
 }
+.bottom-grid.thk-grid {
+  grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr);
+}
+
+/* ------------------------------------------------------------------ heatmap */
+.heatmap .chart-plot {
+  position: relative;
+}
+.heatmap-canvas {
+  position: absolute;
+  image-rendering: auto;
+}
+.heatmap svg {
+  position: relative;
+}
+.heatmap-frame {
+  fill: none;
+  stroke: var(--axis);
+}
+.heatmap-barmark line {
+  stroke: var(--text);
+  stroke-width: 2;
+}
+.heatmap-clip {
+  fill: var(--text-2);
+}
+.heatmap-ref line {
+  stroke: rgba(255, 255, 255, 0.75);
+  stroke-dasharray: 4 3;
+}
+.heatmap-ref text {
+  fill: #fff;
+  font-size: 10.5px;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.55);
+  stroke-width: 2px;
+}
+.heatmap-cross line {
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 1;
+}
+.heatmap-cross .heatmap-cross-bar {
+  stroke: var(--text);
+  stroke-width: 2;
+}
 
 /* ------------------------------------------------------------------ viewport */
 .viewport {
@@ -547,6 +592,20 @@ main.center {
   border-radius: 2px;
   vertical-align: -1px;
   margin-right: 3px;
+}
+
+.deform-badge {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11.5px;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 2px 10px;
+  pointer-events: auto;
 }
 
 /* ------------------------------------------------------------------ right panel */
@@ -1044,6 +1103,75 @@ textarea.notes {
   flex: none;
   margin-top: 2px;
 }
+.warn-head {
+  display: block;
+  font-weight: 600;
+}
+.warn-rest {
+  display: block;
+  color: var(--text-2);
+  font-size: 11.5px;
+}
+
+/* ------------------------------------------------------------------ progress */
+.progress-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 6px 0;
+}
+.progress-main {
+  flex: 1;
+  min-width: 0;
+}
+.progress-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.progress-label > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.progress {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.progress i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 35%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: progress-slide 1.2s ease-in-out infinite;
+}
+@keyframes progress-slide {
+  0% {
+    left: -35%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress i {
+    animation: none;
+    left: 0;
+    width: 100%;
+    opacity: 0.5;
+  }
+}
+.stale-note {
+  margin: 0 0 4px;
+}
 
 /* ------------------------------------------------------------------ cards / props */
 .card {
@@ -1086,6 +1214,86 @@ textarea.notes {
 .props .unit {
   color: var(--muted);
   font-size: 11px;
+}
+
+.card-subtitle {
+  font-weight: 600;
+  font-size: 11.5px;
+  color: var(--text-2);
+  margin: 8px 0 3px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.props .pr-amber dd {
+  color: var(--status-warn);
+  font-weight: 600;
+}
+.props .pr-amber dd svg {
+  vertical-align: -1px;
+  margin-right: 3px;
+}
+.path-fail {
+  margin: 4px 0 8px;
+}
+.path-fail .banner {
+  border-width: 1px 1px 1px 4px;
+}
+.path-fail-detail {
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.path-fail-hint {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+/* winding tension */
+.tension-intro {
+  margin: 0 0 6px;
+}
+.tension-props {
+  margin: 4px 0;
+}
+.tension-table {
+  max-height: 220px;
+}
+.tension-table td.up,
+.tension-table td.down {
+  color: var(--accent);
+  font-weight: 600;
+}
+.tension-table .delta {
+  font-size: 9px;
+  margin-left: 2px;
+  vertical-align: 1px;
+}
+.tension-table .swatch {
+  vertical-align: -1px;
+}
+tr.clickable {
+  cursor: pointer;
+}
+tr.clickable:hover td {
+  background: var(--surface-2);
+}
+.bar-hover {
+  fill: var(--accent-soft);
+  opacity: 0.6;
+}
+.legend.static li > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.legend-box {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
 }
 
 /* ------------------------------------------------------------------ KPI */

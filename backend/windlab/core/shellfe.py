@@ -249,6 +249,9 @@ class FEEvaluation:
     hotspot_factor: float
     hotspot_z: float
     hotspot_cycles: float
+    valid: np.ndarray = None
+    fiber_ref: float = 0.0
+    liner_ref: float = 0.0
 
 
 def evaluate(b: Build, meop: float, burst_cyl: float, cycles_cyl: float) -> FEEvaluation:
@@ -292,4 +295,4 @@ def evaluate(b: Build, meop: float, burst_cyl: float, cycles_cyl: float) -> FEEv
     kf = float(vmax[j] / max(vref, 1e-12))
     cycles = float(min(cycles_cyl * kf ** (1.0 / mat.fatigue_exp), 1e9)) if kf > 0 else 1e9
     return FEEvaluation(sol, ratio, vi, vo, float(dome_burst), float(sol.z[i_crit]), k_crit, kf, float(sol.z[j]),
-                        cycles)
+                        cycles, valid, ref, vref)

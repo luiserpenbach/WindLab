@@ -4,13 +4,13 @@ import { stepStatus } from '../steps/stepStatus';
 import { StatusDot } from './ui';
 
 export function Stepper() {
-  const { step, setStep, sim } = useUi();
+  const { step, setStep, sim, thk } = useUi();
   const { result } = useAnalysis();
   return (
     <nav className="stepper" aria-label="Workflow">
       <ol>
         {STEPS.map((s) => {
-          const st = stepStatus(s.id, result, sim);
+          const st = stepStatus(s.id, result, sim, thk);
           return (
             <li key={s.id}>
               <button

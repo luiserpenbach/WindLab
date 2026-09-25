@@ -32,6 +32,7 @@ import { UTIL_FAIL, UTIL_MAX, utilisation, utilStatus } from '../viewer/colormap
 import { fmtDuration, fmtMass, sig } from '../util/format';
 import { ChecksList, worstCheck } from './shared';
 import { checksForStep } from './stepStatus';
+import { TensionPanel } from './TensionPanel';
 import { MeridianChart } from './VesselStep';
 
 function useLayerResults(): Map<string, LayerResult> {
@@ -327,6 +328,8 @@ export function LayupPanel() {
         />
       ) : null}
 
+      {layers.length ? <TensionPanel /> : null}
+
       {result ? <ChecksList checks={checksForStep(result.checks, 'layup')} title="Layup checks" /> : null}
 
       <Modal
@@ -414,8 +417,21 @@ function LayerEditor({
   onDelete: () => void;
 }) {
   const [idErr, setIdErr] = useState<string | null>(null);
+  const pathFail = checks.find((c) => c.id === `layer.${l.id}.path` && c.status === 'fail');
   return (
     <>
+      {pathFail ? (
+        <div className="path-fail" role="alert">
+          <Banner kind="fail">
+            <strong>Non-geodesic path not feasible — this layer falls back to a geodesic path.</strong>
+            {pathFail.detail ? <div className="path-fail-detail">{pathFail.detail}</div> : null}
+            <div className="path-fail-hint">
+              The analysis, pattern and G-code of {l.id} use the geodesic fallback. Try a different cylinder angle (or
+              Auto), more friction, or other turnaround offsets.
+            </div>
+          </Banner>
+        </div>
+      ) : null}
       <Section
         title={`Layer ${l.id}`}
         actions={
@@ -730,6 +746,11 @@ function SlipBar({ label, lambda, mu }: { label: string; lambda: number; mu: num
   );
 }
 
+/** Bridging length per pass above which the layer card highlights it [mm] (backend flags > 2 mm). */
+const BRIDGING_WARN = 2;
+/** Prestress loss limit of the backend `tension.loss` check. */
+const TENSION_LOSS_WARN = 0.6;
+
 function LayerResultCard({ r, checks }: { r: LayerResult; checks: Check[] }) {
   const helical = r.type === 'helical';
   const ng = helical && r.winding === 'non-geodesic';
@@ -752,6 +773,43 @@ function LayerResultCard({ r, checks }: { r: LayerResult; checks: Check[] }) {
     ['Fibre / resin', `${fmtMass(r.fiber_mass)} / ${fmtMass(r.resin_mass)}`],
     ['Wind time', fmtDuration(r.wind_time)],
   ];
+  // manufacturing: fibre bridging (concave surface) and winding prestress
+  const bridging = r.bridging_length ?? 0;
+  const kn = r.min_normal_curvature ?? 0;
+  const mfg: { k: string; v: string; cls?: string; title?: string }[] = [
+    ...(helical
+      ? [
+          {
+            k: 'Min. κn',
+            v: `${sig(kn, 3)} /mm${kn < 0 ? ` (R ${sig(1 / Math.abs(kn), 3)} mm concave)` : ''}`,
+            cls: kn < 0 ? 'amber' : undefined,
+            title: 'Smallest fibre normal curvature along the path; negative = the fibre crosses concave surface',
+          },
+          {
+            k: 'Bridging length',
+            v: `${sig(bridging, 3)} mm / pass`,
+            cls: bridging > BRIDGING_WARN ? 'amber' : undefined,
+            title: `Path length per pass over concave surface, where the fibre bridges instead of lying down (flagged above ${BRIDGING_WARN} mm)`,
+          },
+        ]
+      : []),
+    {
+      k: 'Winding stress',
+      v: `${sig(r.winding_stress ?? 0, 3)} MPa`,
+      title: 'Ply stress from the band tension while winding',
+    },
+    {
+      k: 'Residual prestress',
+      v: `${sig(r.residual_prestress ?? 0, 3)} MPa`,
+      title: 'Ply prestress left after all later layers are wound',
+    },
+    {
+      k: 'Prestress lost',
+      v: `${sig((r.tension_loss ?? 0) * 100, 2)} %`,
+      cls: (r.tension_loss ?? 0) > TENSION_LOSS_WARN ? 'amber' : undefined,
+      title: `Fraction of the winding prestress relaxed by the layers wound on top (tension.loss check: ${TENSION_LOSS_WARN * 100} %)`,
+    },
+  ];
   const worst = worstCheck(checks);
   return (
     <div className={`card result-card ${worst ? `rc-${worst.status}` : ''}`}>
@@ -761,6 +819,18 @@ function LayerResultCard({ r, checks }: { r: LayerResult; checks: Check[] }) {
           <div key={k}>
             <dt>{k}</dt>
             <dd>{v}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="card-subtitle">Manufacturing</div>
+      <dl className="props two">
+        {mfg.map((m) => (
+          <div key={m.k} title={m.title} className={m.cls ? `pr-${m.cls}` : undefined}>
+            <dt>{m.k}</dt>
+            <dd>
+              {m.cls === 'amber' ? <Icon name="alert" size={11} /> : null}
+              {m.v}
+            </dd>
           </div>
         ))}
       </dl>
@@ -783,21 +853,23 @@ function LayerResultCard({ r, checks }: { r: LayerResult; checks: Check[] }) {
           <span>Dwell slippage {sig(r.dwell_slippage, 3)} on the turnaround circle · informational</span>
         </div>
       ) : null}
-      {checks.map((c) => (
-        <div key={c.id} className={`check c-${c.status} layer-check`} title={c.detail || undefined}>
-          <StatusIcon status={c.status} />
-          <div className="check-main">
-            <div className="check-label">{c.label}</div>
-            {c.detail ? <div className="check-detail">{c.detail}</div> : null}
-          </div>
-          {c.value != null ? (
-            <div className="check-val">
-              {sig(c.value, 3)}
-              {c.limit != null ? <span className="check-lim"> / {sig(c.limit, 3)}</span> : null}
+      {checks
+        .filter((c) => !c.id.endsWith('.path'))
+        .map((c) => (
+          <div key={c.id} className={`check c-${c.status} layer-check`} title={c.detail || undefined}>
+            <StatusIcon status={c.status} />
+            <div className="check-main">
+              <div className="check-label">{c.label}</div>
+              {c.detail ? <div className="check-detail">{c.detail}</div> : null}
             </div>
-          ) : null}
-        </div>
-      ))}
+            {c.value != null ? (
+              <div className="check-val">
+                {sig(c.value, 3)}
+                {c.limit != null ? <span className="check-lim"> / {sig(c.limit, 3)}</span> : null}
+              </div>
+            ) : null}
+          </div>
+        ))}
       <WarningList items={r.warnings} />
     </div>
   );
