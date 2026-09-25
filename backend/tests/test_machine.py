@@ -88,3 +88,20 @@ def test_no_fibre_slack(sized_project):
         mo = simulate_layer(b, bl)
         laid = np.linalg.norm(np.diff(mo.contact, axis=0), axis=1)
         assert np.all(laid + np.diff(mo.free) >= -1e-6)
+
+
+def test_solid_depth_geometry():
+    from windlab import schemas as S
+    from windlab.core.kinematics import solid_depth
+
+    b = build(S.Project(layers=[S.Layer(id="h", type="helical")]))
+    bl = b.layers[0]
+    prof = bl.base
+    # points on the surface are at depth ~0, 5 mm outward along the normal clear, 5 mm inward inside
+    n = prof.normals()
+    idx = np.linspace(20, len(prof.z) - 20, 40).astype(int)
+    on = solid_depth(b, bl, prof.z[idx], prof.r[idx])
+    out = solid_depth(b, bl, prof.z[idx] + 5 * n[idx, 0], prof.r[idx] + 5 * n[idx, 1])
+    ins = solid_depth(b, bl, prof.z[idx] - 5 * n[idx, 0], prof.r[idx] - 5 * n[idx, 1])
+    assert np.all(np.abs(on) < 0.5)
+    assert np.all(out < -4.0) and np.all(ins > 4.0)

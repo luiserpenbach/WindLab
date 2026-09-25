@@ -368,18 +368,50 @@ def _simulate(b: Build, bl: BuiltLayer, path: PathPoints) -> Motion:
                   T)
 
 
+def solid_depth(b: Build, bl: BuiltLayer, x: np.ndarray, rho: np.ndarray) -> np.ndarray:
+    """How far points (x, rho) lie inside the part below this layer, the bosses or the shaft [mm, >0 inside].
+
+    Domes are tested radially from their centres on the axis (they are star-shaped, even with thick polar
+    build-ups whose end faces are nearly flat), the cylinder by radius, bosses and shaft as cylinders.
+    """
+    lin = b.project.liner
+    half = lin.cyl_length / 2.0
+    prof = bl.base
+    depth = np.full(x.shape, -np.inf)
+    cyl = np.abs(x) <= half
+    order = np.argsort(prof.z)
+    depth = np.where(cyl, np.interp(x, prof.z[order], prof.r[order]) - rho, depth)
+    for sign, rb in ((-1.0, lin.boss_radius_a), (1.0, lin.boss_radius_b)):
+        side = np.nonzero(sign * prof.z > half)[0]
+        if len(side) < 2:
+            continue
+        th_s = np.arctan2(prof.r[side], sign * (prof.z[side] - sign * half))
+        rho_s = np.hypot(prof.r[side], prof.z[side] - sign * half)
+        o = np.argsort(th_s)
+        dz = sign * (x - sign * half)
+        m = dz > 0
+        th_p = np.arctan2(rho, dz)
+        d_dome = np.interp(th_p, th_s[o], rho_s[o], left=-np.inf) - np.hypot(rho, dz)
+        in_range = th_p >= th_s.min()  # beyond the pole opening the boss takes over
+        depth = np.where(m & in_range, d_dome, depth)
+        z_end = float(np.max(sign * prof.z[side]))
+        boss = m & (dz <= z_end - half + lin.boss_length)
+        depth = np.maximum(depth, np.where(boss, rb - rho, -np.inf))
+        shaft = m & (dz > z_end - half + lin.boss_length)
+        depth = np.maximum(depth, np.where(shaft, lin.shaft_radius - rho, -np.inf))
+    return depth
+
+
 def free_fibre_clearance(b: Build, bl: BuiltLayer, P: np.ndarray, T: np.ndarray, lam: np.ndarray,
                          skip: float = 5.0, samples: int = 16) -> tuple[float, float]:
-    """Minimum radial clearance of the free fibre (contact -> eye) to the solid (wound part below this
-    layer, bosses, shaft). Returns (min clearance [mm], axial position of the minimum)."""
-    xs, gs = solid_radius(b, bl, "base")
+    """Minimum clearance of the free fibre (contact -> eye) to the part below this layer, bosses and shaft.
+    Returns (min clearance [mm], negative = cuts in, axial position of the minimum)."""
     u = np.linspace(0.0, 1.0, samples + 1)[1:]
     L = np.maximum(lam - skip, 0.0)
     pts = P[:, None, :] + (skip + L[:, None] * u[None, :])[:, :, None] * T[:, None, :]
     x = pts[:, :, 0]
     rho = np.hypot(pts[:, :, 1], pts[:, :, 2])
-    g = np.interp(x, xs, gs)
-    c = rho - g
+    c = -solid_depth(b, bl, x, rho)
     c = np.where(lam[:, None] > skip, c, np.inf)
     k = int(np.argmin(c))
     return float(c.flat[k]), float(x.flat[k])
