@@ -2181,6 +2181,358 @@ td.bad {
   font-size: 11.5px;
 }
 
+/* ------------------------------------------------------------------ badges (materials, fibre override) */
+.toolbar-end {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.type-badge.t-custom {
+  background: color-mix(in srgb, var(--series-3) 20%, transparent);
+  color: color-mix(in srgb, var(--series-3) 75%, var(--text));
+}
+.type-badge.t-muted {
+  background: var(--surface-3);
+  color: var(--muted);
+}
+.type-badge.t-use {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+}
+.type-badge.t-fiber {
+  background: color-mix(in srgb, var(--series-4) 22%, transparent);
+  color: color-mix(in srgb, var(--series-4) 70%, var(--text));
+  text-transform: none;
+  max-width: 52px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ materials library */
+.tab-count {
+  margin-left: 6px;
+  font-size: 10.5px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--series-3) 20%, transparent);
+  color: color-mix(in srgb, var(--series-3) 75%, var(--text));
+  font-weight: 600;
+}
+.lib {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 0 12px 8px;
+}
+.lib-toolbar {
+  flex-wrap: nowrap;
+}
+.lib-toolbar .muted {
+  min-width: 0;
+}
+.lib-scroll {
+  max-height: none;
+  flex: 1;
+  min-height: 80px;
+}
+.lib-table th .th-unit {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.lib-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.lib-name > span:first-child {
+  font-weight: 500;
+}
+.mono-id {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.lib-table tr.shadowed td {
+  opacity: 0.55;
+}
+.lib-table .lib-act {
+  width: 1%;
+  text-align: right;
+}
+.lib-table tbody tr:hover td,
+.test-table tbody tr:hover td {
+  background: var(--surface-2);
+}
+.lib-table tr:hover .row-actions button,
+.test-table tr:hover .row-actions button,
+.lib-table tr:focus-within .row-actions button,
+.test-table tr:focus-within .row-actions button {
+  opacity: 1;
+}
+.mat-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.mat-editor .field {
+  grid-template-columns: minmax(0, 150px) minmax(0, 1fr);
+}
+.mat-editor .numin input {
+  padding-right: 64px;
+}
+.mat-note {
+  margin: 0 0 0 160px;
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.link-btn {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent-2);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+.link-btn:hover {
+  color: var(--accent);
+}
+.resin-cure {
+  margin-top: 4px;
+}
+
+/* ------------------------------------------------------------------ checks linking to layers */
+.check.has-refs {
+  cursor: pointer;
+}
+.check.has-refs:hover {
+  outline: 1px solid var(--border-strong);
+}
+.check-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 3px;
+}
+.check-ref {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--accent-2);
+  border-radius: 9px;
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+.check-ref::before {
+  content: '→ ';
+  color: var(--muted);
+}
+.check-ref:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+@keyframes flash-row {
+  0%,
+  40% {
+    background: var(--accent-soft);
+  }
+  100% {
+    background: transparent;
+  }
+}
+.layer-table tr.flash-row td {
+  animation: flash-row 1.4s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .layer-table tr.flash-row td {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------------------------ KPI / tables misc */
+.kpi-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.data-table tr.row-strong td {
+  font-weight: 600;
+}
+.range-pair {
+  gap: 6px;
+  align-items: center;
+}
+.range-pair .numin {
+  flex: 1;
+}
+.pt-card .card-title {
+  margin-bottom: 2px;
+}
+.pt-table {
+  margin: 2px 0 4px;
+}
+.pt-table td,
+.pt-table th {
+  background: transparent;
+}
+
+/* ------------------------------------------------------------------ optimiser diff */
+.diff-table td.diff-changes {
+  white-space: normal;
+  color: var(--text-2);
+  min-width: 260px;
+}
+.diff-status {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 0 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.ds-same {
+  color: var(--muted);
+}
+.ds-changed,
+.ds-moved {
+  background: var(--warn-soft);
+  color: color-mix(in srgb, var(--status-warn) 75%, var(--text));
+}
+.ds-added {
+  background: var(--ok-soft);
+  color: color-mix(in srgb, var(--status-ok) 75%, var(--text));
+}
+.ds-removed {
+  background: var(--fail-soft);
+  color: var(--status-fail);
+}
+.diff-table tr.diff-removed td:not(:nth-child(3)) {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------ testing */
+.test-bottom {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 0 12px 8px;
+}
+.test-toolbar {
+  flex-wrap: nowrap;
+}
+.test-toolbar .muted {
+  min-width: 0;
+  text-align: right;
+}
+.test-scroll {
+  max-height: none;
+  flex: 1;
+  min-height: 80px;
+}
+.test-table td {
+  padding: 2px 3px;
+}
+.test-table .numin input,
+.test-table input.text {
+  height: 24px;
+  padding: 0 5px;
+}
+.test-table .select-sm {
+  height: 24px;
+  padding: 0 4px;
+}
+.test-table .c-id input {
+  width: 56px;
+}
+.test-table .c-serial input {
+  width: 80px;
+}
+.test-table .c-num .numin {
+  width: 76px;
+}
+.test-table .c-date input {
+  width: 92px;
+}
+.test-table .c-notes input {
+  width: 130px;
+}
+.test-table .c-num .numin {
+  width: 68px;
+}
+.test-table .sep-left {
+  border-left: 1px solid var(--border-strong);
+}
+.loc-ok {
+  color: var(--status-ok);
+  font-weight: 700;
+}
+.loc-bad {
+  color: var(--status-fail);
+  font-weight: 700;
+}
+textarea.paste-area {
+  height: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 8px;
+  margin: 6px 0;
+  white-space: pre;
+}
+.chart-head-row.standalone {
+  margin-bottom: 4px;
+}
+
+/* ------------------------------------------------------------------ export: verification + backplot */
+.verify-card.v-ok {
+  border-color: color-mix(in srgb, var(--status-ok) 55%, var(--border));
+  background: color-mix(in srgb, var(--ok-soft) 70%, var(--surface-2));
+}
+.verify-card.v-bad {
+  border-color: color-mix(in srgb, var(--status-warn) 55%, var(--border));
+  background: color-mix(in srgb, var(--warn-soft) 70%, var(--surface-2));
+}
+.verify-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.verify-table {
+  margin-top: 6px;
+}
+.verify-table td,
+.verify-table th {
+  background: transparent;
+}
+.verify-table td.bad {
+  color: var(--status-fail);
+  font-weight: 600;
+}
+.verify-errors {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 11.5px;
+  color: var(--status-fail);
+}
+.backplot {
+  padding: 0 12px;
+}
+.backplot-bar {
+  flex-wrap: nowrap;
+}
+.backplot-bar .muted {
+  min-width: 0;
+}
+.backplot-grid {
+  padding: 0;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+}
+
 @media print {
   body {
     overflow: visible;

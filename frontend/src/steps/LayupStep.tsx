@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import type {
   BandShape,
@@ -25,6 +25,7 @@ import { LineChart, type Series } from '../components/LineChart';
 import { Banner, Button, Empty, Modal, Spinner, StatusIcon, WarningList } from '../components/ui';
 import { useAnalysis } from '../state/analysis';
 import { newLayer, newLayerId, normalizeProject } from '../state/defaults';
+import { findMat, matOptions, useMaterialLists, type MatEntry } from '../state/materials';
 import { useProject } from '../state/projectStore';
 import { useUi } from '../state/uiStore';
 import { layerColors } from '../viewer/colors';
@@ -34,6 +35,16 @@ import { ChecksList, worstCheck } from './shared';
 import { checksForStep } from './stepStatus';
 import { TensionPanel } from './TensionPanel';
 import { MeridianChart } from './VesselStep';
+import { OptimiseButton } from './OptimiseDialog';
+import type { Fiber } from '../api/types';
+
+/** Short badge text for a per-layer fibre override. */
+function fiberBadge(e: MatEntry<Fiber> | null, id: string): string {
+  const name = e?.rec.name ?? id;
+  if (/glass/i.test(name) || /glass/i.test(id)) return 'glass';
+  if (/aramid|kevlar/i.test(name)) return 'aramid';
+  return id.split(/[-\s]/)[0].slice(0, 6);
+}
 
 function useLayerResults(): Map<string, LayerResult> {
   const { result } = useAnalysis();
@@ -62,6 +73,23 @@ export function LayupPanel() {
   const results = useLayerResults();
   const { result } = useAnalysis();
   const [sel, setSel] = useSelectedLayer();
+  const { reveal } = useUi();
+  const fibers = useMaterialLists().fibers;
+  const tableRef = useRef<HTMLTableElement>(null);
+  // A check row asked to show a layer: scroll it into view and focus it.
+  useEffect(() => {
+    if (!reveal) return;
+    const id = window.requestAnimationFrame(() => {
+      const row = tableRef.current?.querySelector<HTMLTableRowElement>(`tr[data-layer="${CSS.escape(reveal.id)}"]`);
+      if (!row) return;
+      row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      row.querySelector<HTMLButtonElement>('button.layer-name')?.focus({ preventScroll: true });
+      row.classList.remove('flash-row');
+      void row.offsetWidth;
+      row.classList.add('flash-row');
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [reveal]);
   const [dragId, setDragId] = useState<string | null>(null);
   const [overIdx, setOverIdx] = useState<number | null>(null);
   const [suggest, setSuggest] = useState<{
@@ -147,21 +175,23 @@ export function LayupPanel() {
         <Button size="sm" icon="plus" onClick={() => add('hoop')}>
           Hoop
         </Button>
-        <span style={{ flex: 1 }} />
-        <Button
-          size="sm"
-          icon="wand"
-          onClick={runSuggest}
-          title="Ask the backend for a layup that meets the requirements"
-        >
-          Suggest layup
-        </Button>
+        <div className="toolbar-end">
+          <Button
+            size="sm"
+            icon="wand"
+            onClick={runSuggest}
+            title="Ask the backend for a layup that meets the requirements"
+          >
+            Suggest layup
+          </Button>
+          <OptimiseButton />
+        </div>
       </div>
 
       {layers.length === 0 ? (
         <Empty>No layers yet. Add a helical and a hoop layer, or use “Suggest layup”.</Empty>
       ) : (
-        <table className="layer-table">
+        <table className="layer-table" ref={tableRef}>
           <thead>
             <tr>
               <th className="c-idx">#</th>
@@ -185,6 +215,7 @@ export function LayupPanel() {
               return (
                 <tr
                   key={l.id}
+                  data-layer={l.id}
                   className={`${active ? 'active' : ''} ${dragId === l.id ? 'dragging' : ''} ${overIdx === i ? 'drop-before' : ''} ${overIdx === layers.length && i === layers.length - 1 ? 'drop-after' : ''}`}
                   onClick={() => setSel(l.id)}
                   draggable
@@ -237,6 +268,14 @@ export function LayupPanel() {
                           title={`Non-geodesic, cylinder angle ${l.angle == null ? 'auto (balanced)' : `${sig(l.angle, 3)}°`}, μ ${sig(l.friction, 3)}`}
                         >
                           NG
+                        </span>
+                      ) : null}
+                      {l.fiber && l.fiber !== project.composite.fiber ? (
+                        <span
+                          className="type-badge t-fiber"
+                          title={`Fibre override: ${findMat(fibers, l.fiber)?.rec.name ?? `${l.fiber} (unknown)`}`}
+                        >
+                          {fiberBadge(findMat(fibers, l.fiber), l.fiber)}
                         </span>
                       ) : null}
                       {sub && (sub.status === 'fail' || sub.status === 'warn') ? (
@@ -516,6 +555,7 @@ function LayerEditor({
           hint="Band profile used by the band-level thickness simulation"
           onChange={(v) => onChange({ band_shape: v }, 'bandShape')}
         />
+        <LayerFiberField layer={l} onChange={onChange} />
         {l.type === 'helical' ? (
           <>
             <HelicalPathFields layer={l} result={r} onChange={onChange} />
@@ -542,6 +582,16 @@ function LayerEditor({
               onCommit={(v) => onChange({ passes: v }, 'passes')}
             />
             <NumberField
+              label="Band overlap"
+              unit="%"
+              value={Number((l.overlap * 100).toPrecision(10))}
+              min={0}
+              max={90}
+              step={5}
+              hint={`Pitch = band × (1 − overlap) = ${sig(l.band_width * (1 - l.overlap), 3)} mm per mandrel turn${l.overlap > 0 ? ` · ≈ ${sig(1 / (1 - l.overlap), 3)} bands thick per pass` : ''}`}
+              onCommit={(v) => onChange({ overlap: Number((v / 100).toPrecision(10)) }, 'overlap')}
+            />
+            <NumberField
               label="End offset A"
               unit="mm"
               value={l.end_offset_a}
@@ -561,6 +611,20 @@ function LayerEditor({
             />
           </>
         )}
+        <NumberField
+          label="Start angle"
+          unit="°"
+          value={l.start_angle}
+          min={0}
+          lt={360}
+          step={15}
+          hint={
+            l.type === 'hoop'
+              ? 'Pattern clocking: mandrel angle at the layer start (staggers the hoop start lines between layers)'
+              : 'Pattern clocking: mandrel angle at the layer start (staggers the crossover pattern between layers)'
+          }
+          onCommit={(v) => onChange({ start_angle: v }, 'start')}
+        />
         <Field
           label="Thickness"
           hint={
@@ -596,6 +660,37 @@ function LayerEditor({
         </Section>
       ) : null}
     </>
+  );
+}
+
+function LayerFiberField({
+  layer: l,
+  onChange,
+}: {
+  layer: Layer;
+  onChange: (patch: Partial<Layer>, key: string) => void;
+}) {
+  const { project } = useProject();
+  const fibers = useMaterialLists().fibers;
+  const projectFiber = findMat(fibers, project.composite.fiber);
+  const own = l.fiber ? findMat(fibers, l.fiber) : null;
+  return (
+    <SelectField<string>
+      label="Fibre"
+      value={l.fiber ?? ''}
+      options={[
+        { value: '', label: `Project fibre (${projectFiber?.rec.name ?? project.composite.fiber})` },
+        ...matOptions(fibers),
+      ]}
+      hint={
+        l.fiber
+          ? own
+            ? `Layer fibre: ${sig(own.rec.E / 1000, 3)} GPa, ${sig(own.rec.strength, 4)} MPa, ${sig(own.rec.tex, 4)} tex (project fibre for all other layers)`
+            : 'Unknown fibre id: add it to the materials library'
+          : 'Per-layer fibre override (e.g. a glass outer layer); default: the project fibre'
+      }
+      onChange={(v) => onChange({ fiber: v || null }, 'fiber')}
+    />
   );
 }
 
@@ -748,6 +843,8 @@ function SlipBar({ label, lambda, mu }: { label: string; lambda: number; mu: num
 
 /** Bridging length per pass above which the layer card highlights it [mm] (backend flags > 2 mm). */
 const BRIDGING_WARN = 2;
+/** Fibre lift-off gap the backend's layup.bridging check flags [mm] (BRIDGE_GAP). */
+const BRIDGE_GAP_WARN = 0.05;
 /** Prestress loss limit of the backend `tension.loss` check. */
 const TENSION_LOSS_WARN = 0.6;
 
@@ -785,12 +882,23 @@ function LayerResultCard({ r, checks }: { r: LayerResult; checks: Check[] }) {
             cls: kn < 0 ? 'amber' : undefined,
             title: 'Smallest fibre normal curvature along the path; negative = the fibre crosses concave surface',
           },
-          {
-            k: 'Bridging length',
-            v: `${sig(bridging, 3)} mm / pass`,
-            cls: bridging > BRIDGING_WARN ? 'amber' : undefined,
-            title: `Path length per pass over concave surface, where the fibre bridges instead of lying down (flagged above ${BRIDGING_WARN} mm)`,
-          },
+          ...(r.bridging_gap != null
+            ? [
+                {
+                  k: 'Bridging',
+                  v: `${sig(bridging, 3)} mm / pass · gap ${sig(r.bridging_gap, 2)} mm`,
+                  cls: r.bridging_gap > BRIDGE_GAP_WARN ? 'amber' : undefined,
+                  title: `Path length per pass over concave surface and the estimated fibre lift-off there (|κn| L² / 8; the layup.bridging check flags gaps above ${BRIDGE_GAP_WARN} mm)`,
+                },
+              ]
+            : [
+                {
+                  k: 'Bridging length',
+                  v: `${sig(bridging, 3)} mm / pass`,
+                  cls: bridging > BRIDGING_WARN ? 'amber' : undefined,
+                  title: `Path length per pass over concave surface, where the fibre bridges instead of lying down (flagged above ${BRIDGING_WARN} mm)`,
+                },
+              ]),
         ]
       : []),
     {

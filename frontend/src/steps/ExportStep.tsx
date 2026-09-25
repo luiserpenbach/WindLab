@@ -1,10 +1,22 @@
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { api, errorMessage } from '../api/client';
-import type { GcodeResponse, Project, TravellerResponse } from '../api/types';
+import type {
+  FeaExportResponse,
+  GcodeResponse,
+  GcodeVerification,
+  MachineSpec,
+  Project,
+  TravellerResponse,
+} from '../api/types';
 import { Field, Section, Segmented } from '../components/fields';
+import { Icon } from '../components/Icon';
+import { LineChart, type RefLine, type Series } from '../components/LineChart';
 import { Banner, Button, Empty, Kpi, Spinner, WarningList } from '../components/ui';
 import { useProject } from '../state/projectStore';
-import { downloadText, fmtDuration, safeFilename } from '../util/format';
+import { downloadText, fmtDuration, fmtTime, safeFilename, sig } from '../util/format';
+import { BackplotParser, chunks, type BackplotAxis, type BackplotResult } from '../util/gcodeBackplot';
+import type { BackplotMessage, BackplotRequest } from '../workers/backplot.worker';
+import { PressureTargets } from './PressureTargets';
 
 // ------------------------------------------------------------------ local store shared by panel + bottom
 interface ExportState {
@@ -16,7 +28,22 @@ interface ExportState {
   travellerFor: Project | null;
   travellerBusy: boolean;
   travellerError: string | null;
-  tab: 'gcode' | 'traveller';
+  report: { html: string; url: string } | null;
+  reportFor: Project | null;
+  reportBusy: boolean;
+  reportError: string | null;
+  /** The report window was blocked: show a link instead. */
+  reportBlocked: boolean;
+  fea: FeaExportResponse | null;
+  feaFor: Project | null;
+  feaBusy: boolean;
+  feaError: string | null;
+  backplot: BackplotResult | null;
+  /** G-code response the backplot belongs to */
+  backplotFor: GcodeResponse | null;
+  backplotProgress: number | null;
+  backplotError: string | null;
+  tab: 'gcode' | 'backplot' | 'traveller';
 }
 let state: ExportState = {
   gcode: null,
@@ -27,6 +54,19 @@ let state: ExportState = {
   travellerFor: null,
   travellerBusy: false,
   travellerError: null,
+  report: null,
+  reportFor: null,
+  reportBusy: false,
+  reportError: null,
+  reportBlocked: false,
+  fea: null,
+  feaFor: null,
+  feaBusy: false,
+  feaError: null,
+  backplot: null,
+  backplotFor: null,
+  backplotProgress: null,
+  backplotError: null,
   tab: 'gcode',
 };
 const listeners = new Set<() => void>();
@@ -54,6 +94,79 @@ function gcodeFilename(p: Project, r: GcodeResponse): string {
   return `${base}${ext(p)}`;
 }
 
+// ------------------------------------------------------------------ backplot runner (Web Worker, chunked fallback)
+const AXIS_ROLES = ['carriage', 'crossfeed', 'mandrel', 'eye'] as const;
+
+function backplotAxes(m: MachineSpec): BackplotAxis[] {
+  const out: BackplotAxis[] = [];
+  for (const role of AXIS_ROLES) {
+    const ax = m[role];
+    if (!ax) continue;
+    if (role === 'crossfeed' && m.axes_count < 3) continue;
+    if (role === 'eye' && m.axes_count < 4) continue;
+    out.push({ letter: ax.letter.toUpperCase(), role, vmax: ax.max_velocity, rotary: role === 'mandrel' || role === 'eye' });
+  }
+  return out;
+}
+
+let worker: Worker | null = null;
+let workerFailed = false;
+let jobId = 0;
+
+function getWorker(): Worker | null {
+  if (worker || workerFailed) return worker;
+  try {
+    worker = new Worker(new URL('../workers/backplot.worker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = (e: MessageEvent<BackplotMessage>) => {
+      const m = e.data;
+      if (m.id !== jobId) return;
+      if (m.type === 'progress') store.set({ backplotProgress: m.done / Math.max(1, m.total) });
+      else if (m.type === 'done') store.set({ backplot: m.result, backplotProgress: null, backplotError: null });
+      else store.set({ backplotProgress: null, backplotError: m.message });
+    };
+    worker.onerror = () => {
+      workerFailed = true;
+      worker?.terminate();
+      worker = null;
+    };
+  } catch {
+    workerFailed = true;
+    worker = null;
+  }
+  return worker;
+}
+
+/** Parse the program for the backplot off the main thread (or in 256 kB chunks if workers are unavailable). */
+function runBackplot(r: GcodeResponse, machine: MachineSpec) {
+  const id = ++jobId;
+  const opts = { axes: backplotAxes(machine), controller: machine.controller, buckets: 1500 };
+  store.set({ backplot: null, backplotFor: r, backplotProgress: 0, backplotError: null });
+  const w = getWorker();
+  if (w) {
+    w.postMessage({ id, text: r.gcode, opts } satisfies BackplotRequest);
+    return;
+  }
+  const p = new BackplotParser(opts);
+  const it = chunks(r.gcode, 1 << 18);
+  const t0 = performance.now();
+  const step = () => {
+    if (id !== jobId) return;
+    const deadline = performance.now() + 12;
+    let n = it.next();
+    while (!n.done) {
+      p.feed(r.gcode, n.value[0], n.value[1]);
+      if (performance.now() > deadline) break;
+      n = it.next();
+    }
+    if (n.done) store.set({ backplot: p.finish(performance.now() - t0), backplotProgress: null });
+    else {
+      store.set({ backplotProgress: n.value[1] / r.gcode.length });
+      window.setTimeout(step, 0);
+    }
+  };
+  window.setTimeout(step, 0);
+}
+
 // ------------------------------------------------------------------ panel
 export function ExportPanel() {
   const { project } = useProject();
@@ -64,12 +177,50 @@ export function ExportPanel() {
   const selIds = mode === 'all' ? null : ids.filter((id) => picked.has(id));
 
   const genGcode = async () => {
-    store.set({ gcodeBusy: true, gcodeError: null, tab: 'gcode' });
+    store.set({ gcodeBusy: true, gcodeError: null, tab: store.get().tab === 'traveller' ? 'gcode' : store.get().tab });
     try {
       const r = await api.gcode(project, selIds);
       store.set({ gcode: r, gcodeFor: project, gcodeBusy: false });
+      runBackplot(r, project.machine);
     } catch (e) {
       store.set({ gcodeError: errorMessage(e), gcodeBusy: false });
+    }
+  };
+  const genReport = async () => {
+    // open the window inside the click so popup blockers allow it; fill it when the report arrives
+    const w = window.open('', '_blank');
+    if (w) {
+      try {
+        w.document.title = 'WindLab design report';
+        w.document.body.style.font = '14px system-ui, sans-serif';
+        w.document.body.textContent = 'Generating the design report…';
+      } catch {
+        /* cross-origin / closed: ignore */
+      }
+    }
+    store.set({ reportBusy: true, reportError: null, reportBlocked: false });
+    try {
+      const r = await api.report(project);
+      const old = store.get().report;
+      if (old) URL.revokeObjectURL(old.url);
+      const url = URL.createObjectURL(new Blob([r.html], { type: 'text/html;charset=utf-8' }));
+      store.set({ report: { html: r.html, url }, reportFor: project, reportBusy: false });
+      if (w && !w.closed) w.location.href = url;
+      else store.set({ reportBlocked: true });
+    } catch (e) {
+      w?.close();
+      store.set({ reportError: errorMessage(e), reportBusy: false });
+    }
+  };
+  const genFea = async () => {
+    store.set({ feaBusy: true, feaError: null });
+    try {
+      const r = await api.feaExport(project);
+      store.set({ fea: r, feaFor: project, feaBusy: false });
+      downloadText(r.filename, r.inp);
+      window.setTimeout(() => downloadText(r.csv_filename, r.csv, 'text/csv'), 400);
+    } catch (e) {
+      store.set({ feaError: errorMessage(e), feaBusy: false });
     }
   };
   const genTraveller = async () => {
@@ -87,7 +238,7 @@ export function ExportPanel() {
       <Section title="G-code">
         <Field
           label="Controller"
-          hint={`Output for ${project.machine.controller === 'grbl' ? 'GRBL (.gcode)' : 'LinuxCNC (.ngc)'} — change in step 5`}
+          hint={`${project.machine.axes_count}-axis, output for ${project.machine.controller === 'grbl' ? 'GRBL (.gcode)' : 'LinuxCNC (.ngc)'} — change in the Machine step`}
         >
           <span className="value-text">{project.machine.name}</span>
         </Field>
@@ -150,6 +301,9 @@ export function ExportPanel() {
               <Kpi label="Est. time" value={fmtDuration(s.gcode.total_time)} />
             </div>
             <WarningList items={s.gcode.warnings} />
+            {s.gcode.verification ? (
+              <VerificationCard v={s.gcode.verification} r={s.gcode} machine={(s.gcodeFor ?? project).machine} />
+            ) : null}
             <div className="toolbar">
               <Button
                 icon="download"
@@ -183,6 +337,91 @@ export function ExportPanel() {
         {s.traveller && s.travellerFor !== project ? (
           <Banner kind="info">Project changed since generation.</Banner>
         ) : null}
+        <PressureTargets compact />
+      </Section>
+
+      <Section title="Design report">
+        <p className="muted small">
+          Self-contained, printable report: requirements, materials, layup, analysis results and checks.
+        </p>
+        <div className="toolbar">
+          <Button icon="print" disabled={s.reportBusy} onClick={genReport}>
+            Design report
+          </Button>
+          {s.reportBusy ? <Spinner size={12} label="Generating the report" /> : null}
+          {s.report ? (
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="external"
+                onClick={() => s.report && window.open(s.report.url, '_blank')}
+                title="Open the report in a new tab (print from there)"
+              >
+                Open
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="download"
+                onClick={() =>
+                  s.report && downloadText(`${safeFilename(project.name)}-report.html`, s.report.html, 'text/html')
+                }
+              >
+                .html
+              </Button>
+            </>
+          ) : null}
+        </div>
+        {s.reportError ? <Banner kind="fail">{s.reportError}</Banner> : null}
+        {s.reportBlocked && s.report ? (
+          <Banner kind="info">
+            The browser blocked the new window.{' '}
+            <a href={s.report.url} target="_blank" rel="noopener">
+              Open the report
+            </a>
+          </Banner>
+        ) : null}
+        {s.report && s.reportFor !== project ? <Banner kind="info">Project changed since generation.</Banner> : null}
+      </Section>
+
+      <Section title="FEA export (Abaqus)">
+        <p className="muted small">
+          Axisymmetric shell model (SAX1) of liner + layup as an Abaqus input deck, plus the layup table as CSV.
+        </p>
+        <div className="toolbar">
+          <Button icon="download" disabled={s.feaBusy} onClick={genFea}>
+            Abaqus export
+          </Button>
+          {s.feaBusy ? <Spinner size={12} label="Exporting" /> : null}
+        </div>
+        {s.feaError ? <Banner kind="fail">{s.feaError}</Banner> : null}
+        {s.fea ? (
+          <>
+            <div className="kpi-grid">
+              <Kpi label="Elements" value={s.fea.elements.toLocaleString()} sub="SAX1 shell elements" />
+              <Kpi label="Materials" value={s.fea.materials} sub="liner + ply sections" />
+            </div>
+            <div className="toolbar">
+              <Button size="sm" variant="ghost" icon="download" onClick={() => s.fea && downloadText(s.fea.filename, s.fea.inp)}>
+                {s.fea.filename}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="download"
+                onClick={() => s.fea && downloadText(s.fea.csv_filename, s.fea.csv, 'text/csv')}
+              >
+                {s.fea.csv_filename}
+              </Button>
+            </div>
+            {s.feaFor !== project ? <Banner kind="info">Project changed since export.</Banner> : null}
+          </>
+        ) : null}
+        <Banner kind="warn">
+          The deck has not been validated in Abaqus by the WindLab authors. Check units (mm, MPa, N), section
+          orientations, boundary conditions and loads before using its results.
+        </Banner>
       </Section>
     </>
   );
@@ -309,6 +548,198 @@ function TravellerViewer({ r }: { r: TravellerResponse }) {
   );
 }
 
+const ROLE_LABEL: Record<string, string> = {
+  carriage: 'Carriage',
+  crossfeed: 'Crossfeed',
+  mandrel: 'Mandrel',
+  eye: 'Eye',
+};
+
+function roleOf(m: MachineSpec, letter: string): string {
+  for (const role of AXIS_ROLES) {
+    const ax = m[role];
+    if (!ax || ax.letter.toUpperCase() !== letter.toUpperCase()) continue;
+    if (role === 'crossfeed' && m.axes_count < 3) continue;
+    if (role === 'eye' && m.axes_count < 4) continue;
+    return role;
+  }
+  return '';
+}
+
+function VerificationCard({ v, r, machine }: { v: GcodeVerification; r: GcodeResponse; machine: MachineSpec }) {
+  const ok = !v.errors.length && v.time_matches;
+  const letters = Object.keys(v.ranges).sort((a, b) => {
+    const ra = AXIS_ROLES.indexOf(roleOf(machine, a) as (typeof AXIS_ROLES)[number]);
+    const rb = AXIS_ROLES.indexOf(roleOf(machine, b) as (typeof AXIS_ROLES)[number]);
+    return (ra < 0 ? 9 : ra) - (rb < 0 ? 9 : rb) || a.localeCompare(b);
+  });
+  const mandrel = machine.mandrel.letter.toUpperCase();
+  return (
+    <div className={`card verify-card ${ok ? 'v-ok' : 'v-bad'}`} role="status">
+      <div className="card-title verify-title">
+        <span className={`status-icon s-${ok ? 'ok' : v.errors.length ? 'fail' : 'warn'}`} aria-hidden="true">
+          <Icon name={ok ? 'check' : 'alert'} size={12} strokeWidth={2.6} />
+        </span>
+        {ok ? 'Verified' : v.errors.length ? 'Verification found problems' : 'Verified with a time mismatch'}
+      </div>
+      <div className="muted small">
+        Independent re-interpretation of the program (G92 offsets, G93 inverse time): {v.moves.toLocaleString()} feed
+        moves, {v.rapids} rapids, {v.pauses} pauses · interpreted {fmtDuration(v.interpreted_time)}{' '}
+        {v.time_matches ? '= estimate' : `≠ estimate ${fmtDuration(r.total_time)}`}
+      </div>
+      <table className="data-table compact verify-table">
+        <thead>
+          <tr>
+            <th>Axis</th>
+            <th className="num" title="Physical position range [machine units]">
+              Min
+            </th>
+            <th className="num">Max</th>
+            <th className="num" title="Largest change in one feed move [machine units]">
+              Max step
+            </th>
+            <th title="Soft limits of the machine">Limits</th>
+          </tr>
+        </thead>
+        <tbody>
+          {letters.map((L) => {
+            const [lo, hi] = v.ranges[L];
+            const role = roleOf(machine, L);
+            const ax = role ? machine[role as (typeof AXIS_ROLES)[number]] : null;
+            const below = ax?.min != null && lo < ax.min - 1e-6;
+            const above = ax?.max != null && hi > ax.max + 1e-6;
+            return (
+              <tr key={L}>
+                <td>
+                  <strong>{L}</strong> <span className="muted">{ROLE_LABEL[role] ?? ''}</span>
+                </td>
+                <td className={`num ${below ? 'bad' : ''}`}>{sig(lo, 6)}</td>
+                <td className={`num ${above ? 'bad' : ''}`}>{sig(hi, 6)}</td>
+                <td className="num">
+                  {sig(v.max_step[L] ?? 0, 4)}
+                  {L === mandrel ? <span className="muted"> °</span> : null}
+                </td>
+                <td className={`small ${below || above ? 'bad' : 'muted'}`}>
+                  {ax && (ax.min != null || ax.max != null)
+                    ? `${ax.min ?? '−∞'} … ${ax.max ?? '∞'}${below || above ? ' exceeded' : ''}`
+                    : '–'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {v.errors.length ? (
+        <ul className="verify-errors">
+          {v.errors.map((e, i) => (
+            <li key={i}>{e}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+type BpX = 'line' | 'time';
+const BP_COLORS = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--series-7)'];
+
+function Backplot({ r }: { r: GcodeResponse }) {
+  const s = useExport();
+  const { project } = useProject();
+  const [xMode, setXMode] = useState<BpX>('line');
+  const bp = s.backplotFor === r ? s.backplot : null;
+  const machine = (s.gcodeFor ?? project).machine;
+  const charts = useMemo(() => {
+    if (!bp) return null;
+    return bp.series.map((sr, k) => {
+      const d = xMode === 'line' ? sr.byLine : sr.byTime;
+      const series: Series[] = [
+        {
+          id: sr.letter,
+          name: `${ROLE_LABEL[sr.role] ?? sr.role} ${sr.letter}`,
+          x: Array.from(d.x),
+          y: Array.from(d.y),
+          color: BP_COLORS[k % BP_COLORS.length],
+          width: 1.25,
+        },
+      ];
+      return { sr, series };
+    });
+  }, [bp, xMode]);
+  const vlines: RefLine[] = useMemo(
+    () =>
+      (bp?.layers ?? []).map((l) => ({
+        value: xMode === 'line' ? l.line : l.time,
+        label: bp && bp.layers.length <= 12 ? l.label : undefined,
+        color: 'var(--axis)',
+      })),
+    [bp, xMode],
+  );
+  if (s.backplotFor !== r || (!bp && s.backplotProgress == null && !s.backplotError))
+    return (
+      <Empty>
+        <Button size="sm" icon="play" onClick={() => runBackplot(r, machine)}>
+          Plot the program
+        </Button>
+      </Empty>
+    );
+  if (s.backplotError) return <Banner kind="fail">Backplot failed: {s.backplotError}</Banner>;
+  if (!bp || !charts)
+    return (
+      <div className="empty" role="status">
+        <Spinner /> Parsing {r.lines.toLocaleString()} lines… {Math.round((s.backplotProgress ?? 0) * 100)} %
+      </div>
+    );
+  const unitOf = (role: string) =>
+    role === 'mandrel' || role === 'eye'
+      ? machine[role as 'mandrel' | 'eye']?.scale === 1
+        ? '°'
+        : 'units'
+      : machine[role as 'carriage' | 'crossfeed']?.scale === 1
+        ? 'mm'
+        : 'units';
+  return (
+    <div className="backplot">
+      <div className="toolbar backplot-bar">
+        <Segmented<BpX>
+          size="sm"
+          ariaLabel="Backplot x axis"
+          value={xMode}
+          options={[
+            { value: 'line', label: 'vs line' },
+            { value: 'time', label: 'vs time' },
+          ]}
+          onChange={setXMode}
+        />
+        <span className="muted small">
+          Physical axis positions (programmed + G92 offsets) · {bp.moves.toLocaleString()} feed moves ·{' '}
+          {bp.layers.length} layers · {bp.resets} G92 resets · est. {fmtTime(bp.totalTime)} incl. rapids · parsed in{' '}
+          {sig(bp.parseMs / 1000, 2)} s
+          {r.verification && Math.abs(bp.feedTime - r.verification.interpreted_time) > 1e-3 * Math.max(1, bp.feedTime)
+            ? ` · feed time ${fmtDuration(bp.feedTime)} differs from the backend (${fmtDuration(r.verification.interpreted_time)})`
+            : ''}
+        </span>
+      </div>
+      <div className="bottom-grid backplot-grid">
+        {charts.map(({ sr, series }) => (
+          <LineChart
+            key={sr.letter}
+            title={`${ROLE_LABEL[sr.role] ?? sr.role} ${sr.letter} · ${sig(sr.min, 5)} … ${sig(sr.max, 5)}`}
+            series={series}
+            vlines={vlines}
+            xLabel={xMode === 'line' ? 'Line' : 't'}
+            xUnit={xMode === 'line' ? undefined : 's'}
+            xFormat={xMode === 'line' ? (x) => Math.round(x).toLocaleString() : (x) => fmtTime(x)}
+            yLabel={sr.letter}
+            yUnit={unitOf(sr.role)}
+            height={170}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ExportBottom() {
   const s = useExport();
   return (
@@ -326,6 +757,15 @@ export function ExportBottom() {
         <button
           type="button"
           role="tab"
+          aria-selected={s.tab === 'backplot'}
+          className={s.tab === 'backplot' ? 'on' : ''}
+          onClick={() => store.set({ tab: 'backplot' })}
+        >
+          Backplot
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={s.tab === 'traveller'}
           className={s.tab === 'traveller' ? 'on' : ''}
           onClick={() => store.set({ tab: 'traveller' })}
@@ -339,6 +779,12 @@ export function ExportBottom() {
             <GcodeViewer r={s.gcode} />
           ) : (
             <Empty>{s.gcodeBusy ? 'Generating…' : 'Generate G-code to preview the first 300 lines.'}</Empty>
+          )
+        ) : s.tab === 'backplot' ? (
+          s.gcode ? (
+            <Backplot r={s.gcode} />
+          ) : (
+            <Empty>{s.gcodeBusy ? 'Generating…' : 'Generate G-code to plot the axis motion.'}</Empty>
           )
         ) : s.traveller ? (
           <TravellerViewer r={s.traveller} />

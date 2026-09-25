@@ -34,6 +34,10 @@ const PATHS = {
   grip: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01',
   cube: 'M12 2l9 5v10l-9 5-9-5V7zM3 7l9 5 9-5M12 12v10',
   code: 'M8 7l-5 5 5 5M16 7l5 5-5 5',
+  edit: 'M4 20h4L19 9l-4-4L4 16zM13 7l4 4',
+  flask: 'M9 3h6M10 3v6L4.5 18.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3M7 15h10',
+  gauge: 'M12 14l4-4M3.5 17a9 9 0 1 1 17 0',
+  external: 'M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5',
 } as const;
 
 export type IconName = keyof typeof PATHS;

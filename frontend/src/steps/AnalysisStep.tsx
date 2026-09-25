@@ -10,6 +10,8 @@ import { layerColors } from '../viewer/colors';
 import { fmtCycles, fmtMass, sig } from '../util/format';
 import { ThicknessChart } from './LayupStep';
 import { ChecksList } from './shared';
+import { PressureTargets } from './PressureTargets';
+import { feValidMask } from '../state/fe';
 
 function ratioStatus(v: number, limit: number, higherIsBetter: boolean): Status {
   const ok = higherIsBetter ? v >= limit : v <= limit;
@@ -120,6 +122,18 @@ export function AnalysisPanel() {
             }
           />
           <Kpi
+            label="Stress ratio, temp. range"
+            value={sig(st.stress_ratio_worst, 3)}
+            status={ratioStatus(st.stress_ratio_worst, req.stress_ratio_limit, false)}
+            title="Largest fibre stress ratio at MEOP over the operating temperature range (thermal stresses from the cure / stress-free temperature included)"
+            sub={
+              <>
+                <Meter value={st.stress_ratio_worst} limit={req.stress_ratio_limit} />
+                MEOP at {sig(req.temperature_min, 3)} … {sig(req.temperature_max, 3)} °C
+              </>
+            }
+          />
+          <Kpi
             label="Autofrettage"
             value={sig(st.autofrettage_pressure, 4)}
             unit="MPa"
@@ -157,7 +171,8 @@ export function AnalysisPanel() {
       )}
       {!st ? <p className="muted small">No structural result (add helical and hoop layers).</p> : null}
       {fe ? <FeViewControls fe={fe} radius={liner.radius} /> : null}
-      {st ? <LoadTable st={st} /> : null}
+      {st ? <LoadTable st={st} temps={req} /> : null}
+      {st ? <PressureTargets /> : null}
       <ChecksList checks={result.checks} title="All checks" />
     </>
   );
@@ -230,11 +245,21 @@ function FeViewControls({ fe, radius }: { fe: FEResult; radius: number }) {
   );
 }
 
-function LoadTable({ st }: { st: StructuralResult }) {
-  const rows: [string, LoadPoint][] = [
-    ['Residual (0)', st.residual],
-    ['MEOP', st.at_meop],
-    ['Proof', st.at_proof],
+function LoadTable({
+  st,
+  temps,
+}: {
+  st: StructuralResult;
+  temps: { temperature_min: number; temperature_max: number; temperature_ref: number };
+}) {
+  const t = (v: number) => `${sig(v, 3)} °C`;
+  const rows: [string, LoadPoint | null, string][] = [
+    ['After cure', st.cure_residual, `Cool-down from the stress-free temperature to ${t(temps.temperature_ref)}, before autofrettage`],
+    ['Residual (0)', st.residual, `After autofrettage, at 0 MPa and ${t(temps.temperature_ref)}`],
+    ['MEOP cold', st.meop_cold, `MEOP at ${t(temps.temperature_min)}`],
+    ['MEOP', st.at_meop, `MEOP at ${t(temps.temperature_ref)}`],
+    ['MEOP hot', st.meop_hot, `MEOP at ${t(temps.temperature_max)}`],
+    ['Proof', st.at_proof, `Proof pressure at ${t(temps.temperature_ref)}`],
   ];
   return (
     <div className="table-scroll">
@@ -261,8 +286,9 @@ function LoadTable({ st }: { st: StructuralResult }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map(([k, p]) => (
-            <tr key={k}>
+          {rows.map(([k, p, title]) =>
+            p ? (
+            <tr key={k} title={title} className={k === 'MEOP' ? 'row-strong' : undefined}>
               <td>{k}</td>
               <td className="num">{sig(p.pressure, 4)}</td>
               <td className="num">{sig(p.liner_vm, 4)}</td>
@@ -270,7 +296,8 @@ function LoadTable({ st }: { st: StructuralResult }) {
               <td className="num">{sig(p.fiber_hoop, 4)}</td>
               <td className="num">{sig(p.fiber_helical, 4)}</td>
             </tr>
-          ))}
+            ) : null,
+          )}
         </tbody>
       </table>
     </div>
@@ -377,11 +404,12 @@ const num = (a: (number | null)[]) => a.map((v) => (v == null || !Number.isFinit
 
 /**
  * The FE clamps the liner at the bosses (rigid rings); the backend leaves
- * r < boss radius + 3 x wall out of the critical-point and hot-spot search.
- * Returns that zone at each end as chart bands and the z range outside it.
+ * those elements out of the critical-point and hot-spot search and marks
+ * the rest in `fe.valid`. Older backends: r > boss radius + 3 x wall.
+ * Returns the clamp zone at each end as chart bands and the valid test.
  */
 function bossZones(fe: FEResult, l: LinerSpec): { bands: Band[]; valid: (i: number) => boolean } {
-  const ok = fe.z.map((z, i) => fe.r[i] > (z < 0 ? l.boss_radius_a : l.boss_radius_b) + 3 * l.wall_thickness);
+  const ok = feValidMask(fe, l);
   const first = ok.indexOf(true);
   const last = ok.lastIndexOf(true);
   const bands: Band[] = [];
@@ -436,13 +464,15 @@ export function FiberUtilChart({ height = 250 }: { height?: number }) {
           noHover: many,
         });
     }
-    // cylinder reference: the backend scales the cylinder burst by (cylinder peak / peak anywhere)
-    const half = liner.cyl_length / 2;
-    const cylBand = Math.max(half - 20, 0.25 * half);
-    let ref = 0;
-    fe.z.forEach((z, i) => {
-      if (Math.abs(z) < cylBand && Number.isFinite(max[i])) ref = Math.max(ref, max[i]);
-    });
+    // cylinder reference: the backend scales the cylinder burst by (cylinder reference / peak in the valid region)
+    let ref = fe.fiber_ratio_ref ?? 0;
+    if (!(ref > 0)) {
+      const half = liner.cyl_length / 2;
+      const cylBand = Math.max(half - 20, 0.25 * half);
+      fe.z.forEach((z, i) => {
+        if (Math.abs(z) < cylBand && Number.isFinite(max[i])) ref = Math.max(ref, max[i]);
+      });
+    }
     let ic = 0;
     fe.z.forEach((z, i) => {
       if (Math.abs(z - fe.critical_z) < Math.abs(fe.z[ic] - fe.critical_z)) ic = i;
@@ -515,7 +545,8 @@ export function LinerStressChart({ height = 250 }: { height?: number }) {
       if (Math.abs(z - fe.liner_hotspot_z) < Math.abs(fe.z[ih] - fe.liner_hotspot_z)) ih = i;
     });
     const peak = Math.max(vi[ih], vo[ih]);
-    const ref = fe.liner_hotspot_factor > 0 ? peak / fe.liner_hotspot_factor : 0;
+    // cylinder reference of the hot-spot factor (the linear-elastic FE cycle: stress range = stress at MEOP)
+    const ref = fe.liner_vm_ref > 0 ? fe.liner_vm_ref : fe.liner_hotspot_factor > 0 ? peak / fe.liner_hotspot_factor : 0;
     const series: Series[] = [
       { id: 'in', name: 'inner surface', x: fe.z, y: vi, color: 'var(--series-1)' },
       { id: 'out', name: 'outer surface', x: fe.z, y: vo, color: 'var(--series-2)', dash: '5 3' },

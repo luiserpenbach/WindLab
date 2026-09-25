@@ -51,6 +51,82 @@ export interface Requirements {
   design_cycles: number;
   /** Liner fatigue life scatter factor, >= 1 */
   fatigue_scatter_factor: number;
+  /** Minimum operating temperature [degC] */
+  temperature_min: number;
+  /** Maximum operating temperature [degC] */
+  temperature_max: number;
+  /** Ambient temperature of autofrettage / proof [degC] */
+  temperature_ref: number;
+}
+
+// ---------------------------------------------------------------- custom materials
+/** Project-specific (qualified) fibre; takes precedence over the built-in database. */
+export interface CustomFiber {
+  id: string;
+  name: string;
+  /** Axial tensile modulus [MPa], > 0 */
+  E: number;
+  /** Impregnated strand tensile strength [MPa], > 0 */
+  strength: number;
+  /** Failure strain (fraction), > 0 */
+  elongation: number;
+  /** [g/cm3], > 0 */
+  density: number;
+  /** Linear density [g/km], > 0 */
+  tex: number;
+  filaments: string;
+  /** Transverse fibre modulus [MPa] */
+  E2: number;
+  /** Fibre shear modulus [MPa] */
+  G12: number;
+  nu12: number;
+  /** Axial CTE [1/K] */
+  cte1: number;
+  /** Transverse CTE [1/K] */
+  cte2: number;
+}
+
+export interface CustomResin {
+  id: string;
+  name: string;
+  /** [MPa] */
+  E: number;
+  nu: number;
+  /** [g/cm3] */
+  density: number;
+  /** CTE [1/K] */
+  cte: number;
+}
+
+export interface CustomLiner {
+  id: string;
+  name: string;
+  /** [MPa] */
+  E: number;
+  nu: number;
+  /** Yield strength Rp0.2 [MPa] (JSON key "yield") */
+  yield: number;
+  /** [MPa] */
+  ultimate: number;
+  /** [g/cm3] */
+  density: number;
+  /** Elongation at break (fraction) */
+  elongation: number;
+  /** Basquin sigma'_f [MPa], > 0 */
+  fatigue_coeff: number;
+  /** Basquin exponent b, < 0 */
+  fatigue_exp: number;
+  /** CTE [1/K] */
+  cte: number;
+  /** Fracture toughness [MPa sqrt(m)] */
+  k_ic: number;
+}
+
+/** Project-specific materials; they take precedence over the built-in database. */
+export interface MaterialLibrary {
+  fibers: CustomFiber[];
+  resins: CustomResin[];
+  liners: CustomLiner[];
 }
 
 export interface CompositeSpec {
@@ -60,6 +136,8 @@ export interface CompositeSpec {
   fiber_volume_fraction: number;
   /** 0.3 < eta <= 1 */
   translation_efficiency: number;
+  /** Stress-free temperature of the liner/composite bond (cure) [degC] */
+  cure_temperature: number;
 }
 
 export interface PatternChoice {
@@ -106,6 +184,12 @@ export interface Layer {
   thickness_override: number | null;
   /** Band cross-section used by the band-level thickness simulation */
   band_shape: BandShape;
+  /** Fibre override for this layer (e.g. a glass outer layer); null = project fibre */
+  fiber: string | null;
+  /** Hoop: band overlap fraction 0..0.9 (pitch = band x (1 - overlap)) */
+  overlap: number;
+  /** Pattern clocking: mandrel angle at layer start [deg], 0 <= a < 360 */
+  start_angle: number;
 }
 
 export interface MachineAxis {
@@ -122,12 +206,14 @@ export interface MachineAxis {
 }
 
 export type Controller = 'linuxcnc' | 'grbl';
+export type AxesCount = 2 | 3 | 4;
 export type TensionOutput = 'none' | 'm67' | 'spindle';
 export type RotaryReset = 'none' | 'layer' | 'circuit';
 
 export interface MachineSpec {
   name: string;
-  axes_count: 3 | 4;
+  /** 2: mandrel + carriage (eye at a fixed radius), 3: + crossfeed, 4: + eye rotation */
+  axes_count: AxesCount;
   controller: Controller;
   carriage: MachineAxis;
   mandrel: MachineAxis;
@@ -157,8 +243,30 @@ export interface Project {
   liner: LinerSpec;
   requirements: Requirements;
   composite: CompositeSpec;
+  materials: MaterialLibrary;
   layers: Layer[];
   machine: MachineSpec;
+  tests: TestRecord[];
+}
+
+export type TestKind = 'burst' | 'proof' | 'autofrettage' | 'cycle';
+export type FailureLocation = 'cylinder' | 'dome-a' | 'dome-b' | 'boss' | 'leak' | 'none';
+
+export interface TestRecord {
+  id: string;
+  serial: string;
+  kind: TestKind;
+  /** Burst / test pressure [MPa], > 0 */
+  pressure: number;
+  /** Cycle test: cycles to failure (or run-out) */
+  cycles: number | null;
+  failure_location: FailureLocation;
+  /** Measured at test pressure [mL] */
+  volumetric_expansion_total: number | null;
+  /** Measured after venting [mL] */
+  volumetric_expansion_permanent: number | null;
+  date: string;
+  notes: string;
 }
 
 // ---------------------------------------------------------------- results
@@ -168,6 +276,8 @@ export interface Check {
   id: string;
   label: string;
   status: Status;
+  /** Ids of the layers this check refers to */
+  refs: string[];
   value: number | null;
   limit: number | null;
   unit: string;
@@ -218,6 +328,8 @@ export interface LayerResult {
   min_normal_curvature: number;
   /** Path length per pass with negative normal curvature (fibre bridging) [mm] */
   bridging_length: number;
+  /** Largest estimated fibre lift-off over concave surface [mm] (newer backends) */
+  bridging_gap?: number;
   /** Ply stress from the winding tension [MPa] */
   winding_stress: number;
   /** Ply prestress left after all layers are wound [MPa] */
@@ -264,6 +376,20 @@ export interface StructuralResult {
   residual: LoadPoint;
   at_meop: LoadPoint;
   at_proof: LoadPoint;
+  /** State after cure cool-down, before autofrettage */
+  cure_residual: LoadPoint | null;
+  meop_cold: LoadPoint | null;
+  meop_hot: LoadPoint | null;
+  /** Max fibre stress ratio at MEOP over the temperature range */
+  stress_ratio_worst: number;
+  /** Volumetric expansion at autofrettage pressure [mL] */
+  expansion_af_total: number;
+  /** Permanent volumetric expansion after autofrettage [mL] */
+  expansion_af_permanent: number;
+  /** Volumetric expansion at proof [mL] */
+  expansion_proof_total: number;
+  /** Additional permanent expansion from proof [mL] */
+  expansion_proof_permanent: number;
   burst_pressure: number;
   burst_mode: string;
   required_burst: number;
@@ -293,6 +419,12 @@ export interface FEResult {
   /** Nodal radial displacement at MEOP [mm] */
   radial_displacement: number[];
   axial_displacement: number[];
+  /** Elements outside the rigid-boss clamp zone (used for peaks / hot spots) */
+  valid: boolean[];
+  /** Cylinder reference fibre utilisation (burst scaling) */
+  fiber_ratio_ref: number;
+  /** Cylinder reference liner stress range (hot-spot factor) */
+  liner_vm_ref: number;
   /** Burst estimate including the domes [MPa] */
   dome_burst: number;
   critical_z: number;
@@ -388,6 +520,8 @@ export interface ThicknessMapResult {
   s: number[];
   /** Outer surface radius after this layer at the rows [mm] */
   r: number[];
+  /** Axial position of that outer-surface point [mm] (pairs with r; may be empty on older backends) */
+  z_surface?: number[];
   /** Grid columns [deg] */
   phi: number[];
   /** Thickness [mm], rows x columns (downsampled to <= 240 x 360) */
@@ -462,6 +596,13 @@ export interface Fiber {
   /** [g/km] */
   tex: number;
   filaments: string;
+  E2: number;
+  G12: number;
+  nu12: number;
+  /** Axial CTE [1/K] */
+  cte1: number;
+  /** Transverse CTE [1/K] */
+  cte2: number;
 }
 
 export interface Resin {
@@ -470,6 +611,12 @@ export interface Resin {
   E: number;
   nu: number;
   density: number;
+  /** CTE [1/K] */
+  cte: number;
+  /** Typical cure schedule (datasheet); built-in resins only */
+  cure?: string;
+  /** Typical stress-free (final cure) temperature [degC]; built-in resins only */
+  cure_temperature?: number;
 }
 
 export interface LinerMaterial {
@@ -482,6 +629,12 @@ export interface LinerMaterial {
   density: number;
   hardening: number;
   elongation: number;
+  fatigue_coeff: number;
+  fatigue_exp: number;
+  /** CTE [1/K] */
+  cte: number;
+  /** Fracture toughness [MPa sqrt(m)] */
+  k_ic: number;
 }
 
 export interface MaterialsResponse {
@@ -507,12 +660,92 @@ export interface SuggestLayupResponse {
   notes: string[];
 }
 
+/** Independent re-interpretation of the generated program (backend post/verify.py). */
+export interface GcodeVerification {
+  /** Feed moves (G1) */
+  moves: number;
+  /** Rapid moves (G0) */
+  rapids: number;
+  /** M0 / M1 pauses */
+  pauses: number;
+  /** Sum of the inverse-time (G93) feed durations [s] */
+  interpreted_time: number;
+  /** Interpreted time agrees with the generator's estimate */
+  time_matches: boolean;
+  /** Physical axis range per letter [machine units] */
+  ranges: Record<string, [number, number]>;
+  /** Largest physical change in one feed move per letter */
+  max_step: Record<string, number>;
+  max_mandrel_step: number;
+  /** First errors (at most 20) */
+  errors: string[];
+}
+
 export interface GcodeResponse {
   filename: string;
   gcode: string;
   lines: number;
   total_time: number;
   warnings: string[];
+  /** Absent on older backends */
+  verification?: GcodeVerification;
+}
+
+export interface OptimiseRequest {
+  project: Project;
+  /** Wall-clock budget [s], 5..600 */
+  time_budget: number;
+}
+
+export interface OptimiseResult {
+  layers: Layer[];
+  /** [g] */
+  mass_before: number;
+  /** [g] */
+  mass_after: number;
+  evaluations: number;
+  notes: string[];
+}
+
+export interface TestCorrelation {
+  id: string;
+  serial: string;
+  kind: string;
+  measured: number;
+  predicted: number | null;
+  /** Measured / predicted (burst only) */
+  ratio: number | null;
+  location_match: boolean | null;
+  /** Measured / predicted total volumetric expansion */
+  expansion_ratio: number | null;
+}
+
+export interface CalibrationResult {
+  tests: TestCorrelation[];
+  burst_mean_ratio: number | null;
+  burst_cov: number | null;
+  current_efficiency: number;
+  /** Translation efficiency matching the mean */
+  suggested_efficiency: number | null;
+  /** Mean - k*sd (one-sided tolerance, 90 % / 95 %) */
+  b_basis_efficiency: number | null;
+  notes: string[];
+}
+
+export interface ReportResponse {
+  /** Self-contained printable HTML document */
+  html: string;
+}
+
+export interface FeaExportResponse {
+  filename: string;
+  /** Abaqus input deck */
+  inp: string;
+  csv_filename: string;
+  /** Layup table */
+  csv: string;
+  elements: number;
+  materials: number;
 }
 
 export interface TravellerResponse {

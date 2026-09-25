@@ -203,13 +203,15 @@ function AxisReadout({ sim }: { sim: SimulationResult }) {
       'mm',
       `machine ${sig((f.carriage[i] ?? 0) + m.carriage_offset, 5)}`,
     ],
-    [
-      m.crossfeed.letter,
-      'Crossfeed (r)',
-      f.crossfeed[i],
-      'mm',
-      `machine ${sig((f.crossfeed[i] ?? 0) - m.crossfeed_zero_radius, 5)}`,
-    ],
+    m.axes_count >= 3
+      ? [
+          m.crossfeed.letter,
+          'Crossfeed (r)',
+          f.crossfeed[i],
+          'mm',
+          `machine ${sig((f.crossfeed[i] ?? 0) - m.crossfeed_zero_radius, 5)}`,
+        ]
+      : ['–', 'Eye radius', f.crossfeed[i], 'mm', 'fixed (2-axis)'],
     [m.mandrel.letter, 'Mandrel', f.mandrel[i], '°'],
     ...(m.axes_count === 4 && m.eye
       ? ([[m.eye.letter, 'Eye', f.eye[i], '°']] as [string, string, number | undefined, string][])
@@ -302,7 +304,9 @@ export function SimulateBottom() {
     return {
       lin: [
         mk('carriage', `Carriage ${project.machine.carriage.letter}`, f.carriage, 'var(--series-1)'),
-        mk('crossfeed', `Crossfeed ${project.machine.crossfeed.letter}`, f.crossfeed, 'var(--series-2)'),
+        project.machine.axes_count >= 3
+          ? mk('crossfeed', `Crossfeed ${project.machine.crossfeed.letter}`, f.crossfeed, 'var(--series-2)')
+          : { ...mk('crossfeed', 'Eye radius (fixed, 2-axis)', f.crossfeed, 'var(--series-2)'), dash: '4 3' },
       ],
       rot: [mk('mandrel', `Mandrel ${project.machine.mandrel.letter}`, f.mandrel, 'var(--series-3)')],
       eye:

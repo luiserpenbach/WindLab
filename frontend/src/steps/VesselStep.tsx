@@ -2,7 +2,8 @@ import type { DomeType, LinerSpec, Requirements } from '../api/types';
 import { NumberField, Section, SelectField, Segmented, Switch, Field, NumberInput } from '../components/fields';
 import { LineChart, type Series } from '../components/LineChart';
 import { Banner, Button } from '../components/ui';
-import { useAnalysis, useCatalog } from '../state/analysis';
+import { useAnalysis } from '../state/analysis';
+import { findMat, matOptions, useMaterialLists } from '../state/materials';
 import { patchSection, useProject } from '../state/projectStore';
 import { layerColors } from '../viewer/colors';
 import { sig } from '../util/format';
@@ -12,12 +13,13 @@ import { checksForStep } from './stepStatus';
 export function VesselPanel() {
   const { project, update } = useProject();
   const { result } = useAnalysis();
-  const { materials } = useCatalog();
+  const lists = useMaterialLists();
   const l = project.liner;
   const r = project.requirements;
   const setL = (patch: Partial<LinerSpec>, key: string) => update(patchSection('liner', patch), `liner.${key}`);
   const setR = (patch: Partial<Requirements>, key: string) => update(patchSection('requirements', patch), `req.${key}`);
-  const linerMat = materials?.liners.find((m) => m.id === l.material);
+  const linerE = findMat(lists.liners, l.material);
+  const linerMat = linerE?.rec;
   const st = result?.structural;
   const bar = (mpa: number) => `${sig(mpa * 10, 4)} bar`;
   // Mirrors the backend's auto values (core/geometry.py) for display.
@@ -27,6 +29,7 @@ export function VesselPanel() {
   const autoBlendB = autoBlend(l.boss_radius_b);
   const geodesicHelicals = project.layers.filter((x) => x.type === 'helical' && x.winding !== 'non-geodesic');
   const unequalBosses = l.boss_radius_a !== l.boss_radius_b;
+  const tempErr = r.temperature_min > r.temperature_max ? 'Minimum is above maximum' : null;
   // One update = one undo step for all layers.
   const switchToNonGeodesic = () =>
     update((p) => ({
@@ -40,12 +43,14 @@ export function VesselPanel() {
         <SelectField
           label="Material"
           value={l.material}
-          options={(materials?.liners ?? []).map((m) => ({ value: m.id, label: m.name }))}
+          options={matOptions(lists.liners)}
           onChange={(v) => setL({ material: v }, 'material')}
           hint={
             linerMat
-              ? `E ${sig(linerMat.E / 1000, 3)} GPa · Rp0.2 ${sig(linerMat.yield, 3)} MPa · Rm ${sig(linerMat.ultimate, 3)} MPa · ρ ${linerMat.density} g/cm³`
-              : undefined
+              ? `${linerE?.custom ? 'Custom · ' : ''}E ${sig(linerMat.E / 1000, 3)} GPa · Rp0.2 ${sig(linerMat.yield, 3)} MPa · Rm ${sig(linerMat.ultimate, 3)} MPa · ρ ${linerMat.density} g/cm³ · K_IC ${sig(linerMat.k_ic, 3)} MPa√m`
+              : lists.loaded
+                ? 'Unknown material id: add it to the materials library (Materials step)'
+                : undefined
           }
         />
         <NumberField
@@ -292,6 +297,44 @@ export function VesselPanel() {
           step={0.5}
           hint={`Liner must reach ${sig(r.design_cycles * r.fatigue_scatter_factor, 4)} cycles`}
           onCommit={(v) => setR({ fatigue_scatter_factor: v }, 'fsf')}
+        />
+        <Field
+          label="Operating temp."
+          hint={`Stress ratio and liner stress are checked at MEOP at both ends (${sig(r.temperature_max - r.temperature_min, 3)} K range)`}
+          error={tempErr}
+        >
+          <div className="inline range-pair">
+            <NumberInput
+              ariaLabel="Minimum operating temperature"
+              value={r.temperature_min}
+              unit="°C"
+              min={-273}
+              step={5}
+              className="numin-short-unit"
+              onCommit={(v) => setR({ temperature_min: v }, 'tmin')}
+            />
+            <span className="muted" aria-hidden="true">
+              to
+            </span>
+            <NumberInput
+              ariaLabel="Maximum operating temperature"
+              value={r.temperature_max}
+              unit="°C"
+              min={-273}
+              step={5}
+              className="numin-short-unit"
+              onCommit={(v) => setR({ temperature_max: v }, 'tmax')}
+            />
+          </div>
+        </Field>
+        <NumberField
+          label="Ambient (test)"
+          unit="°C"
+          value={r.temperature_ref}
+          min={-273}
+          step={1}
+          hint={`Temperature of autofrettage and proof; cure / stress-free ${sig(project.composite.cure_temperature, 4)} °C (Materials step)`}
+          onCommit={(v) => setR({ temperature_ref: v }, 'tref')}
         />
       </Section>
 

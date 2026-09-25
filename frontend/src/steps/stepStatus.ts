@@ -5,7 +5,9 @@ import { worstStatus } from '../state/analysis';
 /**
  * Check ids are namespaced by the backend (core/design.py): `geo.*`,
  * `layer.<id>[.slip|.path]`, `layup.*` (e.g. `layup.bridging`), `tension.*`,
- * `burst*`, `sr.*`, `af.*`, `liner.*`, `fatigue`, `dome.*`, `fe.*` (shell FE).
+ * `burst*`, `sr.*` (incl. `sr.temp`), `af.*`, `liner.*` (incl. `liner.temp`, `liner.lbb`),
+ * `fatigue`, `dome.*`, `fe.*` (shell FE). Checks also carry `refs` (layer ids);
+ * their rows link to those layers.
  * Known prefixes are routed explicitly; anything else falls back to keyword
  * matching, then to "analysis".
  */
@@ -81,6 +83,7 @@ export function stepStatus(
     case 'simulate':
       if (!sim) return null;
       return !sim.limits_ok ? 'fail' : sim.warnings.length ? 'warn' : 'ok';
+    case 'testing':
     case 'export':
       return null;
   }

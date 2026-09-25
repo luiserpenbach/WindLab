@@ -2,7 +2,16 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import type { PathResult, SimulationResult, ThicknessMapResult } from '../api/types';
 import type { PathColorMode } from '../viewer/colormaps';
 
-export type StepId = 'vessel' | 'materials' | 'layup' | 'thickness' | 'analysis' | 'machine' | 'simulate' | 'export';
+export type StepId =
+  | 'vessel'
+  | 'materials'
+  | 'layup'
+  | 'thickness'
+  | 'analysis'
+  | 'testing'
+  | 'machine'
+  | 'simulate'
+  | 'export';
 
 export const STEPS: { id: StepId; n: number; label: string }[] = [
   { id: 'vessel', n: 1, label: 'Vessel' },
@@ -10,9 +19,10 @@ export const STEPS: { id: StepId; n: number; label: string }[] = [
   { id: 'layup', n: 3, label: 'Layup' },
   { id: 'thickness', n: 4, label: 'Thickness' },
   { id: 'analysis', n: 5, label: 'Analysis' },
-  { id: 'machine', n: 6, label: 'Machine' },
-  { id: 'simulate', n: 7, label: 'Simulate' },
-  { id: 'export', n: 8, label: 'Export' },
+  { id: 'testing', n: 6, label: 'Testing' },
+  { id: 'machine', n: 7, label: 'Machine' },
+  { id: 'simulate', n: 8, label: 'Simulate' },
+  { id: 'export', n: 9, label: 'Export' },
 ];
 
 export type ThemePref = 'system' | 'light' | 'dark';
@@ -48,6 +58,10 @@ interface UiState {
   setStep: (s: StepId) => void;
   selectedLayerId: string | null;
   setSelectedLayerId: (id: string | null) => void;
+  /** Last "show this layer" request (check rows): the Layup table scrolls to it. */
+  reveal: { id: string; n: number } | null;
+  /** Switch to the Layup step, select the layer and scroll it into view. */
+  revealLayer: (id: string) => void;
   theme: ThemePref;
   resolvedTheme: 'light' | 'dark';
   cycleTheme: () => void;
@@ -100,6 +114,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
     ),
   );
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+  const [reveal, setReveal] = useState<{ id: string; n: number } | null>(null);
   const [theme, setTheme] = useState<ThemePref>(() =>
     readLS('windlab.theme', ['system', 'light', 'dark'] as const, 'system'),
   );
@@ -140,6 +155,14 @@ export function UiProvider({ children }: { children: ReactNode }) {
     setStepState(s);
     writeLS('windlab.step', s);
   }, []);
+  const revealLayer = useCallback(
+    (id: string) => {
+      setSelectedLayerId(id);
+      setStep('layup');
+      setReveal((r) => ({ id, n: (r?.n ?? 0) + 1 }));
+    },
+    [setStep],
+  );
   const cycleTheme = useCallback(
     () => setTheme((t) => (t === 'system' ? (systemDark() ? 'light' : 'dark') : t === 'dark' ? 'light' : 'dark')),
     [],
@@ -161,6 +184,8 @@ export function UiProvider({ children }: { children: ReactNode }) {
       setStep,
       selectedLayerId,
       setSelectedLayerId,
+      reveal,
+      revealLayer,
       theme,
       resolvedTheme,
       cycleTheme,
@@ -181,6 +206,8 @@ export function UiProvider({ children }: { children: ReactNode }) {
       step,
       setStep,
       selectedLayerId,
+      reveal,
+      revealLayer,
       theme,
       resolvedTheme,
       cycleTheme,

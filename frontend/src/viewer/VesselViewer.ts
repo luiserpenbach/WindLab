@@ -55,6 +55,8 @@ interface SimVisual {
   carriage: THREE.Group;
   arm: THREE.Mesh;
   railY: number;
+  /** 2-axis machine: the eye runs at one fixed radius (no crossfeed). */
+  fixedR: number | null;
 }
 
 const FIBRE_COLOR = '#e34948';
@@ -483,7 +485,7 @@ export class VesselViewer {
     }
     this.simVis = null;
     this.mandrelGroup.rotation.x = 0;
-    if (sim && sim.frames.t.length && machine) this.buildMachine(sim);
+    if (sim && sim.frames.t.length && machine) this.buildMachine(sim, machine.axes_count);
     // dim the static path once a simulation is present
     const pathLine = this.pathGroup.getObjectByName('path') as THREE.Line | undefined;
     if (pathLine) (pathLine.material as THREE.LineBasicMaterial).opacity = this.pathOpacity();
@@ -504,7 +506,7 @@ export class VesselViewer {
     const ang = (f.mandrel[i] ?? 0) * DEG;
     this.mandrelGroup.rotation.x = ang;
     const cx = f.carriage[i] ?? 0;
-    const cy = f.crossfeed[i] ?? this.maxR + 20;
+    const cy = v.fixedR ?? f.crossfeed[i] ?? this.maxR + 20;
     v.eye.position.set(cx, cy, 0);
     v.eye.rotation.y = (f.eye[i] ?? 0) * DEG;
     v.carriage.position.x = cx;
@@ -819,7 +821,14 @@ export class VesselViewer {
     const shared = linerOuter.x.length === surface.x.length;
     const rows = map.s.length;
     const rowIdx = map.s.map((_, i) => i);
+    // Rows pair with outer-surface points (z_surface, r). With the shared profile index the
+    // surface point i sits over liner point i (liner arclength -> row); otherwise map the
+    // surface z straight to the rows via z_surface when it is monotonic.
+    const zs = map.z_surface;
+    let zMono = !!zs && zs.length === rows && rows > 1;
+    for (let k = 1; zMono && k < rows; k++) if (!(zs![k] > zs![k - 1])) zMono = false;
     const vs = idx.map((i) => {
+      if (!shared && zMono) return (interpAsc(zs!, rowIdx, surface.x[i]) + 0.5) / rows;
       const s = shared ? sL[i] : interpAsc(linerOuter.x, sL, surface.x[i]);
       return (interpAsc(map.s, rowIdx, s) + 0.5) / rows;
     });
@@ -1111,7 +1120,7 @@ export class VesselViewer {
     if (this.simVis) apply(this.simVis.laid);
   }
 
-  private buildMachine(sim: SimulationResult) {
+  private buildMachine(sim: SimulationResult, axesCount: number) {
     const f = sim.frames;
     const n = f.t.length;
     // laid fibre (contact points, mandrel frame)
@@ -1124,6 +1133,7 @@ export class VesselViewer {
     laid.frustumCulled = false;
     this.mandrelGroup.add(laid);
 
+    const fixedR = axesCount === 2 && f.crossfeed.length ? Math.max(...f.crossfeed) : null;
     const maxCross = Math.max(...f.crossfeed, this.maxR + 30);
     const railY = maxCross + 70;
     const zMin = Math.min(...f.carriage, this.span[0]);
@@ -1165,6 +1175,6 @@ export class VesselViewer {
     free.frustumCulled = false;
     this.machineGroup.add(free);
 
-    this.simVis = { sim, pathIndex: null, laid, laidPos, free, eye, roller, carriage, arm, railY };
+    this.simVis = { sim, pathIndex: null, laid, laidPos, free, eye, roller, carriage, arm, railY, fixedR };
   }
 }

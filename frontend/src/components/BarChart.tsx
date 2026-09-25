@@ -23,6 +23,7 @@ export function BarChart({
   height = 180,
   title,
   hline,
+  xLabel = 'Layer',
 }: {
   categories: string[];
   /** Short labels under the bars (default: 1-based index). */
@@ -33,6 +34,8 @@ export function BarChart({
   height?: number;
   title?: ReactNode;
   hline?: { value: number; label?: string };
+  /** Category axis title */
+  xLabel?: string;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(340);
@@ -173,7 +176,7 @@ export function BarChart({
                 </text>
               ) : null}
               <text className="chart-axis-label" x={PAD.l + plotW / 2} y={height - 3} textAnchor="middle">
-                Layer
+                {xLabel}
               </text>
             </g>
           </svg>

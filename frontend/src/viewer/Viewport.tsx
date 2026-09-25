@@ -21,14 +21,14 @@ import {
 } from './colormaps';
 import { VesselViewer, type Deformation, type SurfaceOverlay } from './VesselViewer';
 import { sig } from '../util/format';
+import { feValidMask } from '../state/fe';
 
 const NODATA_CSS = `rgb(${NODATA_RGB.map((c) => Math.round(c * 255)).join(' ')})`;
 
 /**
  * FE quantity along z for the surface overlay: values per element and the
- * colour domain. The domain ignores the clamped zone next to the bosses
- * (r < boss radius + 3 x wall; rigid-ring artefacts the backend also skips),
- * where values then saturate.
+ * colour domain. The domain covers the valid elements only (`fe.valid`: the
+ * backend leaves the rigid-ring boss clamp zone out), where values then saturate.
  */
 function feOverlayData(
   fe: FEResult,
@@ -41,11 +41,11 @@ function feOverlayData(
       : fe.liner_vm_inner.map((v, i) => Math.max(v, fe.liner_vm_outer[i] ?? v));
   let max = 0;
   let hi = 0;
+  const valid = feValidMask(fe, liner);
   values.forEach((v, i) => {
     if (v == null || !Number.isFinite(v)) return;
     max = Math.max(max, v);
-    const rb = fe.z[i] < 0 ? liner.boss_radius_a : liner.boss_radius_b;
-    if (fe.r[i] > rb + 3 * liner.wall_thickness) hi = Math.max(hi, v);
+    if (valid[i]) hi = Math.max(hi, v);
   });
   if (!(hi > 0)) hi = max > 0 ? max : 1;
   return { values, hi, max, clipped: max > hi * 1.001 };

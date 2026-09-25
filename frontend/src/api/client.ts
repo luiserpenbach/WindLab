@@ -1,5 +1,9 @@
 import type {
   AnalysisResult,
+  CalibrationResult,
+  FeaExportResponse,
+  OptimiseResult,
+  ReportResponse,
   ExampleProject,
   GcodeResponse,
   Health,
@@ -129,6 +133,11 @@ export const api = {
   gcode: (project: Project, layer_ids: string[] | null, s?: AbortSignal) =>
     request<GcodeResponse>('POST', '/gcode', { project, layer_ids }, s),
   traveller: (p: Project, s?: AbortSignal) => request<TravellerResponse>('POST', '/traveller', p, s),
+  optimise: (project: Project, time_budget: number, s?: AbortSignal) =>
+    request<OptimiseResult>('POST', '/optimise', { project, time_budget }, s),
+  calibrate: (p: Project, s?: AbortSignal) => request<CalibrationResult>('POST', '/calibrate', p, s),
+  report: (p: Project, s?: AbortSignal) => request<ReportResponse>('POST', '/report', p, s),
+  feaExport: (p: Project, s?: AbortSignal) => request<FeaExportResponse>('POST', '/fea-export', p, s),
   listProjects: (s?: AbortSignal) => request<ProjectListEntry[]>('GET', '/projects', undefined, s),
   getProject: (name: string, s?: AbortSignal) => request<Project>('GET', `/projects/${enc(name)}`, undefined, s),
   saveProject: (name: string, p: Project) => request<OkResponse>('PUT', `/projects/${enc(name)}`, p),

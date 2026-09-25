@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import type { Controller, MachineAxis, MachineSpec, RotaryReset, TensionOutput } from '../api/types';
+import type { AxesCount, Controller, MachineAxis, MachineSpec, RotaryReset, TensionOutput } from '../api/types';
 import {
   Field,
   NumberField,
@@ -19,6 +19,12 @@ import { ChecksList } from './shared';
 import { checksForStep } from './stepStatus';
 
 type AxisKey = 'carriage' | 'mandrel' | 'crossfeed' | 'eye';
+
+const AXES_HINT: Record<AxesCount, string> = {
+  2: 'Mandrel + carriage only: the eye stays at one fixed radius clear of the whole part (no crossfeed). Simplest machine; longer free fibre on the domes.',
+  3: 'Mandrel, carriage and crossfeed: the eye follows the surface at the set clearance.',
+  4: 'Adds payout-eye rotation so the band stays flat on the domes.',
+};
 
 const AXIS_META: Record<AxisKey, { label: string; kind: 'linear' | 'rotary'; desc: string }> = {
   carriage: { label: 'Carriage', kind: 'linear', desc: 'Eye travel along the mandrel axis' },
@@ -54,7 +60,7 @@ function grblHints(m: MachineSpec): { kind: 'warn' | 'info'; text: string }[] {
   const letters = [
     m.carriage.letter,
     m.mandrel.letter,
-    m.crossfeed.letter,
+    ...(m.axes_count >= 3 ? [m.crossfeed.letter] : []),
     ...(m.axes_count === 4 && m.eye ? [m.eye.letter] : []),
   ].map((x) => x.toUpperCase());
   if (new Set(letters).size !== letters.length) out.push({ kind: 'warn', text: 'Two axes share the same letter.' });
@@ -75,7 +81,11 @@ export function MachinePanel() {
       return { ...p, machine: { ...p.machine, [k]: { ...cur, ...patch } } };
     }, `axis.${k}.${key}`);
   const axes: AxisKey[] =
-    m.axes_count === 4 ? ['carriage', 'mandrel', 'crossfeed', 'eye'] : ['carriage', 'mandrel', 'crossfeed'];
+    m.axes_count === 4
+      ? ['carriage', 'mandrel', 'crossfeed', 'eye']
+      : m.axes_count === 3
+        ? ['carriage', 'mandrel', 'crossfeed']
+        : ['carriage', 'mandrel'];
   const hints = grblHints(m);
 
   return (
@@ -100,20 +110,21 @@ export function MachinePanel() {
         <Field label="Name">
           <TextInput value={m.name} ariaLabel="Machine name" onCommit={(v) => set({ name: v }, 'name')} />
         </Field>
-        <Field label="Axes">
-          <Segmented<3 | 4>
+        <Field label="Axes" hint={AXES_HINT[m.axes_count]}>
+          <Segmented<AxesCount>
             ariaLabel="Axis count"
             value={m.axes_count}
             options={[
+              { value: 2, label: '2-axis' },
               { value: 3, label: '3-axis' },
               { value: 4, label: '4-axis (eye)' },
             ]}
             onChange={(n) => {
-              if (n === 3) {
-                lastEye.current = m.eye ?? lastEye.current;
-                set({ axes_count: 3, eye: null }, 'axes');
-              } else {
+              if (n === 4) {
                 set({ axes_count: 4, eye: m.eye ?? lastEye.current ?? axis('B', 36000, 1440, null, null) }, 'axes');
+              } else {
+                lastEye.current = m.eye ?? lastEye.current;
+                set({ axes_count: n, eye: null }, 'axes');
               }
             }}
           />
@@ -253,21 +264,27 @@ export function MachinePanel() {
           hint="Machine carriage coordinate of the vessel mid-plane (z = 0)"
           onCommit={(v) => set({ carriage_offset: v }, 'co')}
         />
-        <NumberField
-          label="Crossfeed zero radius"
-          unit="mm"
-          value={m.crossfeed_zero_radius}
-          step={1}
-          hint="Eye distance from mandrel axis when crossfeed reads 0"
-          onCommit={(v) => set({ crossfeed_zero_radius: v }, 'czr')}
-        />
+        {m.axes_count >= 3 ? (
+          <NumberField
+            label="Crossfeed zero radius"
+            unit="mm"
+            value={m.crossfeed_zero_radius}
+            step={1}
+            hint="Eye distance from mandrel axis when crossfeed reads 0"
+            onCommit={(v) => set({ crossfeed_zero_radius: v }, 'czr')}
+          />
+        ) : null}
         <NumberField
           label="Eye clearance"
           unit="mm"
           value={m.eye_clearance}
           gt={0}
           step={1}
-          hint="Eye clearance from the wound surface"
+          hint={
+            m.axes_count === 2
+              ? 'Clearance from the largest wound radius the eye passes (it runs at one fixed radius)'
+              : 'Eye clearance from the wound surface'
+          }
           onCommit={(v) => set({ eye_clearance: v }, 'ec')}
         />
         <NumberField
