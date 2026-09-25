@@ -21,7 +21,7 @@ mass in g.
 | POST | `/api/optimise` | `OptimiseRequest` | `OptimiseResult`: minimum-mass layup with all blocking checks passing |
 | POST | `/api/calibrate` | `Project` (with `tests`) | `CalibrationResult`: measured vs predicted, suggested efficiency |
 | POST | `/api/report` | `Project` | `{html}`: self-contained printable design report |
-| POST | `/api/ccx-export` | `Project` | `{filename, inp, elements, nodes, materials, steps}` CalculiX axisymmetric solid deck |
+| POST | `/api/ccx-export` | `Project` | `{filename, inp, elements, nodes, materials, steps}` CalculiX axisymmetric solid deck (CLI `windlab ccx --run` also compares with WindLab) |
 | POST | `/api/fea-export` | `Project` | `{filename, inp, csv_filename, csv, elements, materials}` Abaqus SAX1 deck + layup CSV |
 | POST | `/api/traveller` | `Project` | `{markdown, html}` shop-floor work instructions (`html` is an unstyled fragment) |
 | GET | `/api/projects` | – | `[{name, modified}]` saved on the server |

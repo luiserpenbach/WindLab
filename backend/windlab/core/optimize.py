@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 
 from .. import schemas as S
-from .design import DesignError, analyze, apply_tension_schedule, suggest_layup
+from .design import DesignError, analyze, suggest_layup
 
 
 @dataclass
@@ -80,8 +80,6 @@ def optimise(project: S.Project, time_budget: float = 60.0) -> OptResult:
                 notes.append(f"{desc}: -{res.mass.total - r.mass.total:.0f} g")
                 layers, res, improved = cand, r, True
                 break
-    layers = apply_tension_schedule(project, layers)
-    notes.append("Applied the recommended winding tension schedule")
     notes.append(f"Mass {m0:.0f} g -> {res.mass.total:.0f} g ({(1 - res.mass.total / m0) * 100:.1f}% lighter), "
                  f"{evals} evaluations")
     return OptResult(layers, m0, res.mass.total, evals, notes)

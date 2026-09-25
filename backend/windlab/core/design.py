@@ -301,16 +301,18 @@ def structural(b: Build) -> tuple[S.StructuralResult, dict]:
     mat = get_liner(b.project.liner.material, b.project.materials)
     # MEOP at the operating temperature extremes (elastic reload from the final state)
     fin = hist[-1].state
-    temp_pts, sr_worst, liner_temp = {}, max(ratios.values()), 0.0
+    temp_pts, sr_worst, liner_temp, temp_plastic = {}, max(ratios.values()), 0.0, 0.0
     for key, T in (("cold", req.temperature_min), ("hot", req.temperature_max)):
         dT = T - T_cure
         s_T = v.solve(req.meop, fin.liner, fin.eps, dT)
         saved, v.dT = v.dT, dT
         temp_pts[key] = _load_point(v, f"meop_{key}", s_T)
         sr_worst = max(sr_worst, max(v.fiber_ratio(s_T.eps).values()))
-        liner_temp = max(liner_temp, von_mises(s_T.liner_sigma) / v.liner.yield_stress(s_T.liner))
+        liner_temp = max(liner_temp, von_mises(s_T.liner_sigma) / v.liner.yield_stress(fin.liner))
+        temp_plastic = max(temp_plastic, s_T.liner.alpha - fin.liner.alpha)
         z0 = v.solve(0.0, fin.liner, fin.eps, dT)  # unpressurised at T: reverse yield in the cold
-        liner_temp = max(liner_temp, von_mises(z0.liner_sigma) / v.liner.yield_stress(z0.liner))
+        liner_temp = max(liner_temp, von_mises(z0.liner_sigma) / v.liner.yield_stress(fin.liner))
+        temp_plastic = max(temp_plastic, z0.liner.alpha - fin.liner.alpha)
         v.dT = saved
     cycles = liner_fatigue_cycles(mat, hist[-1].state.liner_sigma, meop_state.liner_sigma)
     t_hoop, t_hel = netting_thickness(b, p_req)
@@ -327,6 +329,7 @@ def structural(b: Build) -> tuple[S.StructuralResult, dict]:
         expansion_proof_permanent=V * (ev(hist[max(i for i in range(i_proof, i_meop) if phases[i] == "unload")].state)
                                        - ev(residual_state)),
     )
+    exp = {k: (0.0 if abs(v_) < 1e-6 else v_) for k, v_ in exp.items()}
     res = S.StructuralResult(
         **exp,
         autofrettage_pressure=p_af,
@@ -358,6 +361,7 @@ def structural(b: Build) -> tuple[S.StructuralResult, dict]:
         "proof_plastic": hist[i_proof].state.liner.alpha - residual_state.liner.alpha,
         "af_fiber_ratio": max(v.fiber_ratio(hist[phases.index("unload") - 1].state.eps).values()),
         "liner_temp_ratio": liner_temp,
+        "liner_temp_plastic": temp_plastic,
         "cyl_helical_stress": _cyl_value(dz, ds),
         "dome_helical_stress": _dome_max(b, dz, ds),
     }
@@ -449,7 +453,7 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
                     value=st.stress_ratio_worst, limit=lim,
                     detail=f"MEOP at {req.temperature_min:g} to {req.temperature_max:g} degC incl. cure residual "
                            "stresses"))
-    out.append(_chk("liner.temp", "Liner elastic over temperature range", extra["liner_temp_ratio"] <= 1.0 + 1e-6,
+    out.append(_chk("liner.temp", "Liner elastic over temperature range", extra["liner_temp_plastic"] <= 1e-7,
                     value=extra["liner_temp_ratio"], limit=1.0,
                     detail="Liner von Mises / yield at 0 and MEOP, at the minimum and maximum temperature"))
     # leak-before-burst: a through-wall liner crack of length 2t must be stable at MEOP (all temperatures)
@@ -484,8 +488,10 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
         worst = int(np.argmax(tr.loss))
         out.append(_chk("tension.loss", "Winding prestress retained", tr.loss[worst] <= 0.6, warn=tr.residual_stress[worst] > 0,
                         value=float(tr.loss[worst]), limit=0.6, refs=[b.layers[worst].spec.id],
-                        detail=f"Layer {worst + 1} loses {tr.loss[worst] * 100:.0f}% of its winding prestress as later "
-                               "layers compress it (slack inner layers wrinkle). Use the tension schedule."))
+                        detail=(f"Layer {worst + 1} loses {tr.loss[worst] * 100:.0f}% of its winding prestress as later "
+                                "layers compress it (slack inner layers wrinkle). Use the tension schedule.")
+                        if tr.loss[worst] > 0.6 else
+                        f"Largest loss {tr.loss[worst] * 100:.0f}% (layer {worst + 1}); inner layers keep their prestress."))
     bridging = [(bl, normal_curvature(bl)) for bl in b.layers if bl.gp is not None]
     bridging = [(bl, kn) for bl, kn in bridging if kn[2] > BRIDGE_GAP]
     if bridging:

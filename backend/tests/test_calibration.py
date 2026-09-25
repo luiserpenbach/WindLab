@@ -17,9 +17,8 @@ def test_calibration_scales_efficiency(sized_project):
     r = calibrate(sized_project.model_copy(update={"tests": tests}))
     eta = sized_project.composite.translation_efficiency
     assert r.burst_mean_ratio == pytest.approx(0.92, rel=1e-6)
-    assert r.suggested_efficiency == pytest.approx(0.92 * eta, rel=1e-6)
-    assert r.b_basis_efficiency < r.suggested_efficiency
+    assert r.b_basis_efficiency is None or r.b_basis_efficiency < r.suggested_efficiency
     # re-running with the suggested efficiency brings predictions onto the tests (liner share makes it approximate)
     p2 = sized_project.model_copy(update={"composite": sized_project.composite.model_copy(
         update={"translation_efficiency": r.suggested_efficiency})})
-    assert analyze(p2).structural.burst_pressure == pytest.approx(0.92 * pred, rel=0.03)
+    assert analyze(p2).structural.burst_pressure == pytest.approx(0.92 * pred, rel=0.01)  # iterated: closes the gap

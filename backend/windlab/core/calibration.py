@@ -32,6 +32,26 @@ def _k_b(n: int) -> float:
     return _K_B[lo] if lo == hi else _K_B[lo] + (_K_B[hi] - _K_B[lo]) * (n - lo) / (hi - lo)
 
 
+def _efficiency_for(project: S.Project, burst_target: float) -> float | None:
+    """Translation efficiency whose predicted cylinder burst equals ``burst_target`` (secant iteration;
+    burst is nearly but not exactly proportional to the efficiency because the liner carries a share)."""
+    def pb(eta: float) -> float:
+        p = project.model_copy(update={"composite": project.composite.model_copy(
+            update={"translation_efficiency": eta})})
+        return analyze(p).structural.burst_pressure
+
+    e0 = project.composite.translation_efficiency
+    b0 = pb(e0)
+    e1 = min(max(e0 * burst_target / b0, 0.3), 1.0)
+    b1 = pb(e1)
+    for _ in range(8):
+        if abs(b1 - burst_target) < 1e-3 * burst_target or abs(b1 - b0) < 1e-12:
+            break
+        e2 = min(max(e1 + (burst_target - b1) * (e1 - e0) / (b1 - b0), 0.3), 1.0)
+        e0, b0, e1, b1 = e1, b1, e2, pb(e2)
+    return e1 if abs(b1 - burst_target) < 0.01 * burst_target else None
+
+
 def calibrate(project: S.Project) -> S.CalibrationResult:
     res = analyze(project)
     st, fe = res.structural, res.fe
@@ -54,6 +74,11 @@ def calibrate(project: S.Project) -> S.CalibrationResult:
                 match = t.failure_location == pred_loc
             if t.failure_location == "cylinder":
                 burst_ratios.append(t.pressure / st.burst_pressure)
+        elif t.kind == "cycle" and st and t.cycles:
+            pred = min(st.liner_fatigue_cycles, fe.liner_hotspot_cycles if fe else math.inf)
+            rows.append(S.TestCorrelation(id=t.id, serial=t.serial, kind=t.kind, measured=float(t.cycles),
+                                          predicted=pred, ratio=t.cycles / pred if pred else None))
+            continue
         elif t.kind in ("proof", "autofrettage") and st:
             pred = t.pressure
             p_ref = st.autofrettage_pressure if t.kind == "autofrettage" else project.requirements.meop * \
@@ -68,18 +93,21 @@ def calibrate(project: S.Project) -> S.CalibrationResult:
     if burst_ratios:
         r = np.array(burst_ratios)
         mean = float(r.mean())
-        sug = eta * mean
+        sug = _efficiency_for(project, mean * st.burst_pressure)
         if len(r) >= 2:
             sd = float(r.std(ddof=1))
             cov = sd / mean
-            bb = eta * max(mean - _k_b(len(r)) * sd, 0.0)
+            target = mean - _k_b(len(r)) * sd
+            if target > 0.3 * mean:
+                bb = _efficiency_for(project, target * st.burst_pressure)
+            else:
+                notes.append("B-basis not meaningful with this scatter / sample size (more tests needed)")
             notes.append(f"{len(r)} cylinder bursts: mean ratio {mean:.3f}, CoV {cov * 100:.1f}%")
         else:
             notes.append("One cylinder burst: the suggested efficiency is a point estimate; B-basis needs >= 2")
-        if sug > 1.0:
-            notes.append("Suggested efficiency above 1: check the fibre strength data or test records")
-    else:
-        notes.append("No cylinder burst tests recorded: add tests to calibrate the translation efficiency")
+        if sug is None:
+            notes.append("No translation efficiency in 0.3-1.0 reproduces the measured bursts: check the fibre "
+                         "strength data and the test records")
     if any(r.location_match is False for r in rows):
         notes.append("Some bursts failed at a different location than predicted: review dome reinforcement and the "
                      "shell FE critical location")

@@ -206,7 +206,7 @@ def get_fiber(fid: str, lib=None) -> Fiber:
 def get_resin(rid: str, lib=None) -> Resin:
     for r in getattr(lib, "resins", None) or []:
         if r.id == rid:
-            return Resin(r.id, r.name, r.E, r.nu, r.density, r.cte)
+            return Resin(r.id, r.name, r.E, r.nu, r.density, r.cte, r.cure, r.cure_temperature)
     if rid not in RESINS:
         raise KeyError(f"Unknown resin '{rid}'")
     return RESINS[rid]

@@ -79,6 +79,8 @@ class CustomResin(BaseModel):
     nu: float = 0.35
     density: float = Field(..., gt=0)
     cte: float = Field(60e-6, description="CTE [1/K]")
+    cure: str = Field("", description="Typical cure schedule (for the traveller)")
+    cure_temperature: float = Field(120.0, description="Typical stress-free (final cure) temperature [degC]")
 
 
 class CustomLiner(BaseModel):
@@ -348,7 +350,7 @@ class FEResult(BaseModel):
     valid: list[bool] = Field(default_factory=list,
                               description="Elements outside the rigid-boss clamp zone (used for peaks/hot spots)")
     fiber_ratio_ref: float = Field(0.0, description="Cylinder reference fibre utilisation (burst scaling)")
-    liner_vm_ref: float = Field(0.0, description="Cylinder reference liner stress range (hot-spot factor)")
+    liner_vm_ref: float = Field(0.0, description="Median liner von Mises (range at MEOP) in the cylinder: hot-spot reference")
     dome_burst: float = Field(..., description="Burst estimate including the domes [MPa]")
     critical_z: float
     critical_layer: Optional[str]
