@@ -197,7 +197,7 @@ def autofrettage_window(v: Vessel, proof: float, p_burst_est: float) -> tuple[fl
     p_lo = max(proof, 1.05 * first_yield_pressure(v))
     # highest pressure that unloads without compressive reverse yielding
     lo, hi = 0.0, max(p_burst_est, p_lo) * 1.2
-    for _ in range(40):
+    for _ in range(22):  # ~1e-6 relative: far below the other model uncertainties
         mid = 0.5 * (lo + hi)
         if reverse_yield_ratio(v, mid) <= REVERSE_YIELD_LIMIT:
             lo = mid

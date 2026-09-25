@@ -60,8 +60,15 @@ class Liner:
             return sig_tr, st
         e_el = eps - st.eps_p
 
+        Ci, e0, e1 = self.Cinv, float(e_el[0]), float(e_el[1])
+
         def sig_of(dg: float) -> np.ndarray:
-            return np.linalg.solve(self.Cinv + dg * _P, e_el)
+            # closed-form 2x2 solve of (C^-1 + dg P) sigma = e_el
+            a = Ci[0, 0] + dg * 2.0 / 3.0
+            bb = Ci[0, 1] - dg / 3.0
+            d = Ci[1, 1] + dg * 2.0 / 3.0
+            det = a * d - bb * bb
+            return np.array([(d * e0 - bb * e1) / det, (a * e1 - bb * e0) / det])
 
         def resid(dg: float) -> float:
             s = sig_of(dg)
