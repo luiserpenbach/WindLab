@@ -266,7 +266,9 @@ def structural(b: Build) -> tuple[S.StructuralResult, dict]:
     proof = req.meop * req.proof_factor
     p_req = req.meop * req.burst_factor
     # elastic-only burst estimate for window sizing
-    pb_est, _, _ = burst(v, v.virgin(), p_req)
+    T_cure = b.project.composite.cure_temperature
+    cure = v.cool(req.temperature_ref - T_cure)
+    pb_est, _, _ = burst(v, v.initial(), p_req)
     p_lo, p_hi = autofrettage_window(v, proof, pb_est)
     auto = req.autofrettage_pressure is None
     if auto:
@@ -285,6 +287,19 @@ def structural(b: Build) -> tuple[S.StructuralResult, dict]:
     pb, mode, _ = burst(v, hist[-1].state, pb_est)
     ratios = v.fiber_ratio(meop_state.eps)
     mat = get_liner(b.project.liner.material, b.project.materials)
+    # MEOP at the operating temperature extremes (elastic reload from the final state)
+    fin = hist[-1].state
+    temp_pts, sr_worst, liner_temp = {}, max(ratios.values()), 0.0
+    for key, T in (("cold", req.temperature_min), ("hot", req.temperature_max)):
+        dT = T - T_cure
+        s_T = v.solve(req.meop, fin.liner, fin.eps, dT)
+        saved, v.dT = v.dT, dT
+        temp_pts[key] = _load_point(v, f"meop_{key}", s_T)
+        sr_worst = max(sr_worst, max(v.fiber_ratio(s_T.eps).values()))
+        liner_temp = max(liner_temp, von_mises(s_T.liner_sigma) / v.liner.yield_stress(s_T.liner))
+        z0 = v.solve(0.0, fin.liner, fin.eps, dT)  # unpressurised at T: reverse yield in the cold
+        liner_temp = max(liner_temp, von_mises(z0.liner_sigma) / v.liner.yield_stress(z0.liner))
+        v.dT = saved
     cycles = liner_fatigue_cycles(mat, hist[-1].state.liner_sigma, meop_state.liner_sigma)
     t_hoop, t_hel = netting_thickness(b, p_req)
     dz, ds = dome_netting_stress(b, req.meop)
@@ -296,6 +311,10 @@ def structural(b: Build) -> tuple[S.StructuralResult, dict]:
         residual=pts[i_af_end],
         at_meop=pts[i_meop],
         at_proof=pts[i_proof],
+        cure_residual=_load_point(v, "cure", cure[-1]) if cure else None,
+        meop_cold=temp_pts["cold"],
+        meop_hot=temp_pts["hot"],
+        stress_ratio_worst=sr_worst,
         burst_pressure=pb,
         burst_mode=mode,
         required_burst=p_req,
@@ -313,6 +332,7 @@ def structural(b: Build) -> tuple[S.StructuralResult, dict]:
         "meop_yield_ratio": von_mises(meop_state.liner_sigma) / (mat.yield_ + v.liner.H * meop_state.liner.alpha),
         "proof_plastic": hist[i_proof].state.liner.alpha - residual_state.liner.alpha,
         "af_fiber_ratio": max(v.fiber_ratio(hist[phases.index("unload") - 1].state.eps).values()),
+        "liner_temp_ratio": liner_temp,
         "cyl_helical_stress": _cyl_value(dz, ds),
         "dome_helical_stress": _dome_max(b, dz, ds),
     }
@@ -398,6 +418,13 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
                     value=st.stress_ratio_hoop, limit=lim, detail="Fibre stress / delivered strength (stress rupture)"))
     out.append(_chk("sr.helical", "Stress ratio helical @MEOP", st.stress_ratio_helical <= lim,
                     value=st.stress_ratio_helical, limit=lim))
+    out.append(_chk("sr.temp", "Stress ratio over temperature range", st.stress_ratio_worst <= lim,
+                    value=st.stress_ratio_worst, limit=lim,
+                    detail=f"MEOP at {req.temperature_min:g} to {req.temperature_max:g} degC incl. cure residual "
+                           "stresses"))
+    out.append(_chk("liner.temp", "Liner elastic over temperature range", extra["liner_temp_ratio"] <= 1.0 + 1e-6,
+                    value=extra["liner_temp_ratio"], limit=1.0,
+                    detail="Liner von Mises / yield at 0 and MEOP, at the minimum and maximum temperature"))
     p_lo, p_hi = st.autofrettage_window
     out.append(_chk("af.window", "Autofrettage window", p_hi >= p_lo, value=st.autofrettage_pressure,
                     unit="MPa", detail=f"Feasible range {p_lo:.1f} - {p_hi:.1f} MPa"))

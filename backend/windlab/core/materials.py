@@ -28,6 +28,8 @@ class Fiber:
     E2: float = _CARBON_E2
     G12: float = _CARBON_G12
     nu12: float = _CARBON_NU12
+    cte1: float = -0.4e-6  # axial CTE [1/K]
+    cte2: float = 7.0e-6  # transverse CTE [1/K]
 
     @property
     def area(self) -> float:
@@ -42,6 +44,7 @@ class Resin:
     E: float
     nu: float
     density: float
+    cte: float = 60e-6
 
     @property
     def G(self) -> float:
@@ -60,6 +63,7 @@ class LinerMaterial:
     elongation: float
     fatigue_coeff: float  # Basquin sigma'_f [MPa]
     fatigue_exp: float  # Basquin b [-]
+    cte: float = 23.6e-6  # [1/K]
 
     @property
     def hardening(self) -> float:
@@ -85,7 +89,7 @@ FIBERS: dict[str, Fiber] = {
         Fiber("AS4-12K", "Hexcel AS4 12K", 231_000, 4433, 0.018, 1.79, 858, "12K"),
         Fiber(
             "E-glass-2400", "E-glass direct roving 2400 tex", 72_000, 2400, 0.033, 2.58, 2400,
-            "roving", E2=72_000, G12=30_000, nu12=0.22,
+            "roving", E2=72_000, G12=30_000, nu12=0.22, cte1=5.0e-6, cte2=5.0e-6,
         ),
     ]
 }
@@ -104,9 +108,11 @@ LINERS: dict[str, LinerMaterial] = {
     for m in [
         LinerMaterial("AA6061-T6", "Aluminium 6061-T6", 68_900, 0.33, 276, 310, 2.70, 0.12, 386, -0.071),
         LinerMaterial("AA6061-T62", "Aluminium 6061-T62", 68_900, 0.33, 262, 296, 2.70, 0.10, 380, -0.071),
-        LinerMaterial("AA7075-T73", "Aluminium 7075-T73", 71_700, 0.33, 434, 503, 2.81, 0.10, 900, -0.10),
-        LinerMaterial("Ti-6Al-4V", "Titanium Ti-6Al-4V (annealed)", 113_800, 0.34, 880, 950, 4.43, 0.14, 1500, -0.085),
-        LinerMaterial("SS316L", "Stainless 316L (annealed)", 193_000, 0.30, 290, 580, 7.99, 0.40, 1000, -0.114),
+        LinerMaterial("AA7075-T73", "Aluminium 7075-T73", 71_700, 0.33, 434, 503, 2.81, 0.10, 900, -0.10, 23.4e-6),
+        LinerMaterial("Ti-6Al-4V", "Titanium Ti-6Al-4V (annealed)", 113_800, 0.34, 880, 950, 4.43, 0.14, 1500, -0.085,
+                      8.6e-6),
+        LinerMaterial("SS316L", "Stainless 316L (annealed)", 193_000, 0.30, 290, 580, 7.99, 0.40, 1000, -0.114,
+                      16.0e-6),
     ]
 }
 
@@ -124,6 +130,8 @@ class Ply:
     eps1_ult: float  # delivered fibre-direction failure strain in the vessel
     fiber_E: float
     fiber_strength: float  # delivered fibre stress at failure (with translation efficiency)
+    alpha1: float = 0.0  # ply CTE, fibre direction [1/K]
+    alpha2: float = 0.0  # ply CTE, transverse [1/K]
 
     @property
     def nu21(self) -> float:
@@ -147,6 +155,9 @@ def ply_properties(fiber: Fiber, resin: Resin, Vf: float, efficiency: float) -> 
     G12 = _halpin_tsai(fiber.G12, resin.G, Vf, 1.0)
     nu12 = Vf * fiber.nu12 + Vm * resin.nu
     eps_ult = efficiency * fiber.strength / fiber.E
+    # Schapery
+    alpha1 = (fiber.E * fiber.cte1 * Vf + resin.E * resin.cte * Vm) / (fiber.E * Vf + resin.E * Vm)
+    alpha2 = (1 + fiber.nu12) * fiber.cte2 * Vf + (1 + resin.nu) * resin.cte * Vm - alpha1 * nu12
     return Ply(
         E1=E1,
         E2=E2,
@@ -157,6 +168,8 @@ def ply_properties(fiber: Fiber, resin: Resin, Vf: float, efficiency: float) -> 
         eps1_ult=eps_ult,
         fiber_E=fiber.E,
         fiber_strength=efficiency * fiber.strength,
+        alpha1=alpha1,
+        alpha2=alpha2,
     )
 
 
@@ -177,7 +190,7 @@ def get_fiber(fid: str, lib=None) -> Fiber:
     for f in getattr(lib, "fibers", None) or []:
         if f.id == fid:
             return Fiber(f.id, f.name, f.E, f.strength, f.elongation, f.density, f.tex, f.filaments, f.E2, f.G12,
-                         f.nu12)
+                         f.nu12, f.cte1, f.cte2)
     if fid not in FIBERS:
         raise KeyError(f"Unknown fibre '{fid}'")
     return FIBERS[fid]
@@ -186,7 +199,7 @@ def get_fiber(fid: str, lib=None) -> Fiber:
 def get_resin(rid: str, lib=None) -> Resin:
     for r in getattr(lib, "resins", None) or []:
         if r.id == rid:
-            return Resin(r.id, r.name, r.E, r.nu, r.density)
+            return Resin(r.id, r.name, r.E, r.nu, r.density, r.cte)
     if rid not in RESINS:
         raise KeyError(f"Unknown resin '{rid}'")
     return RESINS[rid]
@@ -196,7 +209,7 @@ def get_liner(lid: str, lib=None) -> LinerMaterial:
     for m in getattr(lib, "liners", None) or []:
         if m.id == lid:
             return LinerMaterial(m.id, m.name, m.E, m.nu, m.yield_, m.ultimate, m.density, m.elongation,
-                                 m.fatigue_coeff, m.fatigue_exp)
+                                 m.fatigue_coeff, m.fatigue_exp, m.cte)
     if lid not in LINERS:
         raise KeyError(f"Unknown liner material '{lid}'")
     return LINERS[lid]

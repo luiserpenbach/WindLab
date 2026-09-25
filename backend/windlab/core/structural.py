@@ -68,9 +68,17 @@ class Liner:
             vm = von_mises(s)
             return vm - (k0 + self.H * dg * 2.0 / 3.0 * vm)
 
+        r0 = resid(0.0)
+        if not r0 > 1e-9 * k0:  # on the yield surface within round-off: elastic
+            return sig_tr, st
         hi = 1e-6
-        while resid(hi) > 0:
+        for _ in range(80):
+            rh = resid(hi)
+            if not (rh > 0) or not np.isfinite(rh):
+                break
             hi *= 4.0
+        while not np.isfinite(resid(hi)):
+            hi *= 0.5
         dg = brentq(resid, 0.0, hi, xtol=1e-14, rtol=1e-12)
         s = sig_of(dg)
         new = LinerState(st.eps_p + dg * (_P @ s), st.alpha + dg * 2.0 / 3.0 * von_mises(s))
@@ -93,9 +101,16 @@ class PlyGroup:
         q22 = Q11 * s**4 + 2 * (Q12 + 2 * Q66) * s**2 * c**2 + Q22 * c**4
         return np.array([[q11, q12], [q12, q22]])
 
-    def fiber_strain(self, eps: np.ndarray) -> float:
+    def alpha(self) -> np.ndarray:
+        """Laminate-direction CTE (axial, hoop) of the balanced pair."""
+        c2, s2 = np.cos(self.angle) ** 2, np.sin(self.angle) ** 2
+        a1, a2 = self.ply.alpha1, self.ply.alpha2
+        return np.array([a1 * c2 + a2 * s2, a1 * s2 + a2 * c2])
+
+    def fiber_strain(self, eps: np.ndarray, dT: float = 0.0) -> float:
+        """Mechanical fibre-direction strain (total minus thermal)."""
         c, s = np.cos(self.angle), np.sin(self.angle)
-        return float(eps[0] * c**2 + eps[1] * s**2)
+        return float(eps[0] * c**2 + eps[1] * s**2 - self.ply.alpha1 * dT)
 
 
 @dataclass
@@ -119,15 +134,24 @@ class Vessel:
             K[1] += q[1]
         self.K = K
         self.w_l = liner.R / R_inner
+        # thermal force per unit temperature change: sum w t Qbar alpha
+        Ka = np.zeros(2)
+        for g in groups:
+            fa = g.qbar() @ g.alpha() * g.t
+            Ka += np.array([g.R / R_inner * fa[0], fa[1]])
+        self.Ka = Ka
+        self.dT = 0.0  # current temperature minus stress-free temperature
 
     def _liner_force(self, sig: np.ndarray) -> np.ndarray:
         return self.liner.t * np.array([self.w_l * sig[0], sig[1]])
 
-    def solve(self, p: float, st: LinerState, eps0: np.ndarray) -> State:
-        N = np.array([p * self.Ri / 2.0, p * self.Ri])
+    def solve(self, p: float, st: LinerState, eps0: np.ndarray, dT: float | None = None) -> State:
+        dT = self.dT if dT is None else dT
+        N = np.array([p * self.Ri / 2.0, p * self.Ri]) + self.Ka * dT
+        eps_th = self.liner.mat.cte * dT
         eps = eps0.copy()
         for _ in range(60):
-            sig, new = self.liner.stress(eps, st)
+            sig, new = self.liner.stress(eps - eps_th, st)
             F = self.K @ eps + self._liner_force(sig) - N
             if np.max(np.abs(F)) < 1e-9 * max(1.0, abs(N[1])):
                 break
@@ -136,10 +160,10 @@ class Vessel:
             for j in range(2):
                 e2 = eps.copy()
                 e2[j] += h
-                s2, _ = self.liner.stress(e2, st)
+                s2, _ = self.liner.stress(e2 - eps_th, st)
                 J[:, j] += (self._liner_force(s2) - self._liner_force(sig)) / h
             eps = eps - np.linalg.solve(J, F)
-        sig, new = self.liner.stress(eps, st)
+        sig, new = self.liner.stress(eps - eps_th, st)
         return State(p, eps, sig, new)
 
     def ramp(self, st: State, p_to: float, steps: int) -> list[State]:
@@ -150,15 +174,30 @@ class Vessel:
             out.append(cur)
         return out
 
-    def fiber_ratio(self, eps: np.ndarray) -> dict[str, float]:
+    def cool(self, dT: float, steps: int = 6) -> list[State]:
+        """Cure cool-down at zero pressure from the stress-free state to ``dT``; sets the vessel temperature."""
+        out, cur = [], self.virgin()
+        for d in np.linspace(0.0, dT, steps + 1)[1:]:
+            cur = self.solve(0.0, cur.liner, cur.eps, float(d))
+            out.append(cur)
+        self.dT = dT
+        self._initial = cur if out else self.virgin()
+        return out
+
+    def initial(self) -> State:
+        """State at ambient temperature after cure (the virgin state if no cool-down was run)."""
+        return getattr(self, "_initial", None) or self.virgin()
+
+    def fiber_ratio(self, eps: np.ndarray, dT: float | None = None) -> dict[str, float]:
+        dT = self.dT if dT is None else dT
         r: dict[str, float] = {}
         for g in self.groups:
-            v = g.fiber_strain(eps) / g.ply.eps1_ult
+            v = g.fiber_strain(eps, dT) / g.ply.eps1_ult
             r[g.name] = max(r.get(g.name, -np.inf), v)
         return r
 
     def fiber_stress(self, eps: np.ndarray, kind: str) -> float:
-        vals = [g.fiber_strain(eps) * g.ply.fiber_E for g in self.groups if g.name == kind]
+        vals = [g.fiber_strain(eps, self.dT) * g.ply.fiber_E for g in self.groups if g.name == kind]
         return float(max(vals)) if vals else 0.0
 
     def virgin(self) -> State:
@@ -172,7 +211,8 @@ class HistoryPoint:
 
 
 def run_history(v: Vessel, p_af: float, proof: float, meop: float, steps: int = 16) -> list[HistoryPoint]:
-    pts: list[HistoryPoint] = [HistoryPoint("start", v.virgin())]
+    """Pressure history from the post-cure state (call ``v.cool`` first for thermal residual stresses)."""
+    pts: list[HistoryPoint] = [HistoryPoint("start", v.initial())]
     cur = pts[0].state
     for phase, target, n in (
         ("autofrettage", p_af, steps),
@@ -189,13 +229,26 @@ def run_history(v: Vessel, p_af: float, proof: float, meop: float, steps: int = 
 
 
 def first_yield_pressure(v: Vessel) -> float:
-    # liner response is linear until first yield: scale an elastic solution
-    st = v.solve(1.0, LinerState(), np.zeros(2))
-    return v.liner.mat.yield_ / max(von_mises(st.liner_sigma), 1e-12)
+    """Pressure of first liner yield from the post-cure state (liner response is affine until then)."""
+    s0 = v.initial()
+    if von_mises(s0.liner_sigma) >= v.liner.yield_stress(s0.liner) - 1e-9:
+        return 0.0
+    s1 = v.solve(1.0, s0.liner, s0.eps)
+    d = s1.liner_sigma - s0.liner_sigma
+    lo, hi = 0.0, 1.0
+    while von_mises(s0.liner_sigma + hi * d) < v.liner.mat.yield_ and hi < 1e5:
+        hi *= 2
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        if von_mises(s0.liner_sigma + mid * d) < v.liner.mat.yield_:
+            lo = mid
+        else:
+            hi = mid
+    return hi
 
 
 def reverse_yield_ratio(v: Vessel, p_af: float) -> float:
-    s = v.ramp(v.virgin(), p_af, 12)[-1]
+    s = v.ramp(v.initial(), p_af, 12)[-1]
     # elastic unloading trial (no reverse plasticity allowed)
     z = v.solve(0.0, s.liner, s.eps)
     return von_mises(z.liner_sigma) / v.liner.mat.yield_

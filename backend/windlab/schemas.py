@@ -51,6 +51,9 @@ class Requirements(BaseModel):
     )
     design_cycles: int = Field(1000, ge=1, description="Required MEOP pressure cycles")
     fatigue_scatter_factor: float = Field(4.0, ge=1, description="Liner fatigue life scatter factor")
+    temperature_min: float = Field(-40.0, description="Minimum operating temperature [degC]")
+    temperature_max: float = Field(65.0, description="Maximum operating temperature [degC]")
+    temperature_ref: float = Field(20.0, description="Ambient temperature of autofrettage / proof [degC]")
 
 
 class CustomFiber(BaseModel):
@@ -65,6 +68,8 @@ class CustomFiber(BaseModel):
     E2: float = Field(15_000.0, gt=0, description="Transverse fibre modulus [MPa]")
     G12: float = Field(27_000.0, gt=0, description="Fibre shear modulus [MPa]")
     nu12: float = 0.2
+    cte1: float = Field(-0.4e-6, description="Axial CTE [1/K]")
+    cte2: float = Field(7.0e-6, description="Transverse CTE [1/K]")
 
 
 class CustomResin(BaseModel):
@@ -73,6 +78,7 @@ class CustomResin(BaseModel):
     E: float = Field(..., gt=0)
     nu: float = 0.35
     density: float = Field(..., gt=0)
+    cte: float = Field(60e-6, description="CTE [1/K]")
 
 
 class CustomLiner(BaseModel):
@@ -86,6 +92,7 @@ class CustomLiner(BaseModel):
     elongation: float = Field(0.1, gt=0)
     fatigue_coeff: float = Field(..., gt=0, description="Basquin sigma'_f [MPa]")
     fatigue_exp: float = Field(..., lt=0, description="Basquin exponent b")
+    cte: float = Field(23.6e-6, description="CTE [1/K]")
 
     model_config = {"populate_by_name": True}
 
@@ -104,6 +111,9 @@ class CompositeSpec(BaseModel):
     fiber_volume_fraction: float = Field(0.60, gt=0.3, lt=0.8)
     translation_efficiency: float = Field(
         0.82, gt=0.3, le=1.0, description="Fibre strength translation efficiency in the vessel"
+    )
+    cure_temperature: float = Field(
+        120.0, description="Stress-free temperature of the liner/composite bond (cure) [degC]"
     )
 
 
@@ -282,6 +292,10 @@ class StructuralResult(BaseModel):
     residual: LoadPoint
     at_meop: LoadPoint
     at_proof: LoadPoint
+    cure_residual: Optional[LoadPoint] = Field(None, description="State after cure cool-down, before autofrettage")
+    meop_cold: Optional[LoadPoint] = None
+    meop_hot: Optional[LoadPoint] = None
+    stress_ratio_worst: float = Field(0.0, description="Max fibre stress ratio at MEOP over the temperature range")
     burst_pressure: float
     burst_mode: str
     required_burst: float
