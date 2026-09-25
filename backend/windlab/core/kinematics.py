@@ -45,13 +45,19 @@ class Motion:
         return float(self.t[-1]) if len(self.t) else 0.0
 
 
-def layer_path(b: Build, bl: BuiltLayer) -> PathPoints:
+def layer_path(b: Build, bl: BuiltLayer, samples: int | None = None) -> PathPoints:
     m = b.project.machine
     if bl.spec.type == "helical":
         assert bl.gp is not None and bl.pattern is not None
         p = bl.pattern
-        return helical_layer_path(bl.gp, p.n_bands, p.dwell, 2 * bl.gp.advance + 2 * p.dwell, m.samples_per_pass)
-    return hoop_layer_path(bl.base, bl.z_start, bl.z_end, bl.spec.band_width, bl.spec.passes, pitch=bl.pitch)
+        path = helical_layer_path(bl.gp, p.n_bands, p.dwell, 2 * bl.gp.advance + 2 * p.dwell,
+                                  samples or m.samples_per_pass)
+    else:
+        kw = {"samples_per_rev": samples} if samples else {}
+        path = hoop_layer_path(bl.base, bl.z_start, bl.z_end, bl.spec.band_width, bl.spec.passes, pitch=bl.pitch,
+                               **kw)
+    path.phi = path.phi + math.radians(bl.spec.start_angle)  # pattern clocking
+    return path
 
 
 def profile_envelope(prof, xs: np.ndarray) -> np.ndarray:

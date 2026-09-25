@@ -651,6 +651,7 @@ def suggest_layup(project: S.Project, max_iter: int = 60) -> tuple[list[S.Layer]
                 seq.append(hel_t.model_copy(update={
                     "id": f"hel{ih + 1}", "pattern": None,
                     "turnaround_offset": stagger[ih % len(stagger)] * hel_t.band_width,
+                    "start_angle": round((ih * 137.508) % 360.0, 1),  # golden angle: interleave crossovers
                 }))
                 ih += 1
             else:

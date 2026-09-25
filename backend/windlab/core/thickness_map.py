@@ -72,15 +72,12 @@ def _grid(b: Build, ds: float, n_phi: int):
 
 def _layer_points(b: Build, bl: BuiltLayer, step: float):
     """Dense centre-line of the whole layer: z, r, phi, alpha, liner-s."""
-    B = bl.spec.band_width
+    from .kinematics import layer_path
+
     if bl.spec.type == "helical":
-        gp = bl.gp
-        n = max(int(gp.length / step), 200)
-        p = bl.pattern
-        path = helical_layer_path(gp, p.n_bands, p.dwell, 0.0, n)
+        path = layer_path(b, bl, samples=max(int(bl.gp.length / step), 200))
     else:
-        spr = max(int(2 * math.pi * bl.R_mid / step), 72)
-        path = hoop_layer_path(bl.base, bl.z_start, bl.z_end, B, bl.spec.passes, samples_per_rev=spr, pitch=bl.pitch)
+        path = layer_path(b, bl, samples=max(int(2 * math.pi * bl.R_mid / step), 72))
     # map the path onto the liner meridian coordinate via the shared point index of the profiles
     base = bl.base
     order = np.argsort(base.z)

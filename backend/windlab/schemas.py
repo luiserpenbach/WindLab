@@ -158,6 +158,7 @@ class Layer(BaseModel):
     )
     fiber: Optional[str] = Field(None, description="Fibre override for this layer (e.g. a glass outer layer)")
     overlap: float = Field(0.0, ge=0, le=0.9, description="Hoop: band overlap fraction (pitch = band x (1 - overlap))")
+    start_angle: float = Field(0.0, ge=0, lt=360, description="Pattern clocking: mandrel angle at layer start [deg]")
 
 
 class MachineAxis(BaseModel):
