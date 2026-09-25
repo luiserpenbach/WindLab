@@ -39,7 +39,7 @@ What is checked, against what, and how well it agrees. Everything below is an au
 | Shell FE vs cylinder model (thick composite) | independent formulation | 1-6 % |
 | **CalculiX axisymmetric solid FE vs cylinder model** (desktop example, composite hoop strain at mid-plane) | independent open-source solver | **2-6 %** (cure, autofrettage, proof, MEOP); compared with matrix cracking off, since the deck is linear-elastic |
 | Puck IFF criterion, pure transverse tension / shear / compression | Yt, S, Yc | exact |
-| Progressive shell vs cylinder model burst (desktop example) | independent formulation | within -25 / +5 % (54.7 vs 58.1 MPa; shell sees junction bending) |
+| Progressive shell vs cylinder model burst (desktop example) | independent formulation | within -25 / +5 % (55.0 vs 55.8 MPa for the current layup; the shell sees junction bending) |
 | Burst calibration: suggested efficiency re-run | 0.92 x prediction | 3 % |
 
 The CalculiX comparison also shows what the thin-wall cylinder model cannot: the **liner inner surface**
