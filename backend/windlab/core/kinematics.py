@@ -197,6 +197,7 @@ def plan_times(q: np.ndarray, fibre_step: np.ndarray, v_fibre: float, vmax: np.n
 
 MAX_STEP_DEG = 5.0  # max mandrel rotation per G-code segment
 MAX_STEP_MM = 10.0  # max carriage travel per G-code segment
+MAX_EYE_STEP_DEG = 10.0  # max payout-eye roll per G-code segment (4-axis)
 
 
 def _refine(path: PathPoints, k: np.ndarray) -> PathPoints:
@@ -220,8 +221,9 @@ def simulate_layer(b: Build, bl: BuiltLayer) -> Motion:
     path = layer_path(b, bl)
     mo = _simulate(b, bl, path)
     for _ in range(3):
-        k = np.maximum(np.ceil(np.abs(np.diff(mo.a)) / MAX_STEP_DEG),
-                       np.ceil(np.abs(np.diff(mo.x)) / MAX_STEP_MM)).astype(int)
+        k = np.maximum.reduce([np.ceil(np.abs(np.diff(mo.a)) / MAX_STEP_DEG),
+                               np.ceil(np.abs(np.diff(mo.x)) / MAX_STEP_MM),
+                               np.ceil(np.abs(np.diff(mo.b)) / MAX_EYE_STEP_DEG)]).astype(int)
         if k.max() <= 1:
             break
         path = _refine(path, np.minimum(np.maximum(k, 1), 16))
@@ -321,7 +323,16 @@ def _simulate(b: Build, bl: BuiltLayer, path: PathPoints) -> Motion:
     c, s = np.cos(theta), np.sin(theta)
     Wz = W[:, 1] * s + W[:, 2] * c
     beta = np.arctan2(Wz, W[:, 0])
-    beta = np.unwrap(2 * beta) / 2  # band is symmetric: period pi
+    # where the band width direction is nearly along the roll axis its projection is too short to define
+    # the roll: take the well-defined points and interpolate across (band orientation barely matters there)
+    wxz = np.hypot(Wz, W[:, 0])
+    good = wxz > 0.35
+    if good.sum() >= 2 and not good.all():
+        idx = np.nonzero(good)[0]
+        bg = np.unwrap(2 * beta[good]) / 2
+        beta = np.interp(np.arange(len(beta)), idx, bg)
+    else:
+        beta = np.unwrap(2 * beta) / 2  # band is symmetric: period pi
     beta -= math.pi * round(float(beta[0]) / math.pi)
     if m.axes_count < 4:
         beta = np.zeros_like(beta)
