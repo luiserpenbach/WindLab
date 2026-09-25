@@ -121,6 +121,14 @@ def post_simulate(req: S.LayerRequest):
     return _design_errors(run)
 
 
+@app.post("/api/thickness-map", response_model=S.ThicknessMapResult)
+def post_thickness_map(req: S.ThicknessMapRequest):
+    from .core.thickness_map import map_result
+
+    return _design_errors(lambda: map_result(build(req.project), req.layer_id, req.cumulative,
+                                             req.resolution, req.n_phi))
+
+
 @app.post("/api/gcode")
 def post_gcode(req: S.GcodeRequest):
     def run():

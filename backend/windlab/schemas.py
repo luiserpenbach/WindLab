@@ -92,6 +92,9 @@ class Layer(BaseModel):
     thickness_override: Optional[float] = Field(
         None, gt=0, description="Override cured layer thickness in the cylinder [mm]"
     )
+    band_shape: Literal["rectangular", "lenticular", "elliptical"] = Field(
+        "rectangular", description="Band cross-section used by the band-level thickness simulation"
+    )
 
 
 class MachineAxis(BaseModel):
@@ -272,6 +275,36 @@ class SimulationResult(BaseModel):
     total_time: float
     warnings: list[str]
     limits_ok: bool
+
+
+class ThicknessMapRequest(BaseModel):
+    project: Project
+    layer_id: str
+    cumulative: bool = Field(True, description="Sum all layers up to and including this one")
+    resolution: float = Field(1.0, ge=0.25, le=5.0, description="Grid cell size along the meridian [mm]")
+    n_phi: int = Field(720, ge=90, le=2880, description="Grid cells around the circumference")
+
+
+class ThicknessMapResult(BaseModel):
+    layer_id: str
+    cumulative: bool
+    z: list[float] = Field(..., description="Axial position of the grid rows [mm]")
+    s: list[float] = Field(..., description="Liner meridian arclength of the grid rows [mm]")
+    r: list[float] = Field(..., description="Outer surface radius after this layer at the rows [mm]")
+    phi: list[float] = Field(..., description="Grid columns [deg]")
+    t: list[list[float]] = Field(..., description="Thickness [mm], rows x columns (downsampled)")
+    mean: list[float]
+    min: list[float]
+    max: list[float]
+    analytic: list[float] = Field(..., description="Axisymmetric band-averaged model at the rows [mm]")
+    nominal: float
+    peak: float
+    analytic_peak: float
+    cyl_mean: float
+    cyl_cv: float = Field(..., description="Coefficient of variation of thickness in the cylinder")
+    gap_fraction: float = Field(..., description="Cylinder area below 50% of nominal")
+    overlap_fraction: float = Field(..., description="Cylinder area above 150% of nominal")
+    warnings: list[str] = []
 
 
 class GcodeRequest(BaseModel):
