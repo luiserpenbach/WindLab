@@ -100,6 +100,7 @@ def test_solid_depth_geometry():
     # points on the surface are at depth ~0, 5 mm outward along the normal clear, 5 mm inward inside
     n = prof.normals()
     idx = np.linspace(20, len(prof.z) - 20, 40).astype(int)
+    idx = idx[prof.r[idx] > 35.0]  # away from the bosses (the boss is legitimately close there)
     on = solid_depth(b, bl, prof.z[idx], prof.r[idx])
     out = solid_depth(b, bl, prof.z[idx] + 5 * n[idx, 0], prof.r[idx] + 5 * n[idx, 1])
     ins = solid_depth(b, bl, prof.z[idx] - 5 * n[idx, 0], prof.r[idx] - 5 * n[idx, 1])
