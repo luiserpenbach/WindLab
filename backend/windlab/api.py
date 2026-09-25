@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -33,6 +34,7 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="WindLab", version=__version__, lifespan=_lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=4096)  # G-code and thickness maps are large JSON payloads
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                    allow_methods=["*"], allow_headers=["*"])
 
