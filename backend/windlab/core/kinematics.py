@@ -200,6 +200,23 @@ MAX_STEP_MM = 10.0  # max carriage travel per G-code segment
 MAX_EYE_STEP_DEG = 10.0  # max payout-eye roll per G-code segment (4-axis)
 
 
+def no_slack(P: np.ndarray, lam: np.ndarray) -> np.ndarray:
+    """Constant-tension eye placement along the free-fibre rays.
+
+    The fibre fed through the eye per step is (laid length) + (change of free length). Pulling the eye in
+    faster than fibre is laid would need fibre to be retracted: slack that the tensioner must take up. Any
+    point further out on the ray is a valid eye position (outside the concave envelope), so keep the free
+    length from shrinking faster than the laying rate.
+    """
+    laid = np.linalg.norm(np.diff(P, axis=0), axis=1)
+    out = lam.copy()
+    for i in range(1, len(out)):
+        floor = out[i - 1] - laid[i - 1]
+        if out[i] < floor:
+            out[i] = floor
+    return out
+
+
 def _refine(path: PathPoints, k: np.ndarray) -> PathPoints:
     """Subdivide segment i of the path into k[i] pieces (linear in z, r, phi, alpha, lam)."""
     n = len(path.z)
@@ -228,13 +245,6 @@ def simulate_layer(b: Build, bl: BuiltLayer) -> Motion:
             break
         path = _refine(path, np.minimum(np.maximum(k, 1), 16))
         mo = _simulate(b, bl, path)
-    step = np.diff(mo.a)
-    wind = np.sign(mo.a[-1] - mo.a[0]) or 1.0
-    if step.size and np.max(np.abs(step * wind)[step * wind < 0], initial=0.0) > 2.0:
-        i = int(np.argmin(step * wind))
-        mo.warnings.append(f"Mandrel reverses by up to {abs(step[i]):.1f} deg per segment near z = "
-                           f"{mo.contact[i, 0]:.0f} mm (eye geometry at the turnaround): check that the tensioner "
-                           "takes up the slack")
     da, dx = np.abs(np.diff(mo.a)), np.abs(np.diff(mo.x))
     bad = (da > 2 * MAX_STEP_DEG) | (dx > 2 * MAX_STEP_MM)
     if bad.any():
@@ -308,6 +318,7 @@ def _simulate(b: Build, bl: BuiltLayer, path: PathPoints) -> Motion:
         hi = np.where(pos, mid, hi)
         lo = np.where(pos, lo, mid)
     lam = hi
+    lam = no_slack(P, lam)
     Q = P[:, 1:] + lam[:, None] * T[:, 1:]
     x_eye = P[:, 0] + lam * T[:, 0]
     y_eye = np.linalg.norm(Q, axis=1)

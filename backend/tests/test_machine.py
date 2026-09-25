@@ -79,3 +79,12 @@ def test_rotary_reset_bounds_mandrel_values(sized_project):
     prog = generate(prj, [next(L.id for L in prj.layers if L.type == "helical")])
     ys = [float(v) for v in re.findall(r"^G1.*?Y(-?[0-9.]+)", prog.text, flags=re.M)]
     assert max(ys) < 3 * 360
+
+
+def test_no_fibre_slack(sized_project):
+    """The eye never has to pull fibre back: laid length + change of free length >= 0 at every step."""
+    b = build(sized_project)
+    for bl in b.layers[:4]:
+        mo = simulate_layer(b, bl)
+        laid = np.linalg.norm(np.diff(mo.contact, axis=0), axis=1)
+        assert np.all(laid + np.diff(mo.free) >= -1e-6)
