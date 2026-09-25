@@ -438,6 +438,15 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
     out.append(_chk("liner.temp", "Liner elastic over temperature range", extra["liner_temp_ratio"] <= 1.0 + 1e-6,
                     value=extra["liner_temp_ratio"], limit=1.0,
                     detail="Liner von Mises / yield at 0 and MEOP, at the minimum and maximum temperature"))
+    # leak-before-burst: a through-wall liner crack of length 2t must be stable at MEOP (all temperatures)
+    lmat = get_liner(b.project.liner.material, b.project.materials)
+    sig = max(st.at_meop.liner_hoop, (st.meop_cold.liner_hoop if st.meop_cold else 0.0),
+              (st.meop_hot.liner_hoop if st.meop_hot else 0.0), 0.0)
+    K = sig * math.sqrt(math.pi * b.project.liner.wall_thickness * 1e-3)
+    out.append(_chk("liner.lbb", "Leak-before-burst (liner)", K <= lmat.k_ic, value=K / lmat.k_ic, limit=1.0,
+                    detail=f"Through crack 2t = {2 * b.project.liner.wall_thickness:g} mm at MEOP hoop stress "
+                           f"{sig:.0f} MPa: K = {K:.1f} vs K_Ic {lmat.k_ic:g} MPa*sqrt(m) (overwrap restraint "
+                           "ignored: conservative)"))
     p_lo, p_hi = st.autofrettage_window
     out.append(_chk("af.window", "Autofrettage window", p_hi >= p_lo, value=st.autofrettage_pressure,
                     unit="MPa", detail=f"Feasible range {p_lo:.1f} - {p_hi:.1f} MPa"))

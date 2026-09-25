@@ -93,6 +93,7 @@ class CustomLiner(BaseModel):
     fatigue_coeff: float = Field(..., gt=0, description="Basquin sigma'_f [MPa]")
     fatigue_exp: float = Field(..., lt=0, description="Basquin exponent b")
     cte: float = Field(23.6e-6, description="CTE [1/K]")
+    k_ic: float = Field(29.0, gt=0, description="Fracture toughness [MPa sqrt(m)]")
 
     model_config = {"populate_by_name": True}
 

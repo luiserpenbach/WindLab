@@ -64,6 +64,7 @@ class LinerMaterial:
     fatigue_coeff: float  # Basquin sigma'_f [MPa]
     fatigue_exp: float  # Basquin b [-]
     cte: float = 23.6e-6  # [1/K]
+    k_ic: float = 29.0  # plane-strain fracture toughness [MPa sqrt(m)]
 
     @property
     def hardening(self) -> float:
@@ -108,11 +109,12 @@ LINERS: dict[str, LinerMaterial] = {
     for m in [
         LinerMaterial("AA6061-T6", "Aluminium 6061-T6", 68_900, 0.33, 276, 310, 2.70, 0.12, 386, -0.071),
         LinerMaterial("AA6061-T62", "Aluminium 6061-T62", 68_900, 0.33, 262, 296, 2.70, 0.10, 380, -0.071),
-        LinerMaterial("AA7075-T73", "Aluminium 7075-T73", 71_700, 0.33, 434, 503, 2.81, 0.10, 900, -0.10, 23.4e-6),
+        LinerMaterial("AA7075-T73", "Aluminium 7075-T73", 71_700, 0.33, 434, 503, 2.81, 0.10, 900, -0.10, 23.4e-6,
+                      32.0),
         LinerMaterial("Ti-6Al-4V", "Titanium Ti-6Al-4V (annealed)", 113_800, 0.34, 880, 950, 4.43, 0.14, 1500, -0.085,
-                      8.6e-6),
+                      8.6e-6, 75.0),
         LinerMaterial("SS316L", "Stainless 316L (annealed)", 193_000, 0.30, 290, 580, 7.99, 0.40, 1000, -0.114,
-                      16.0e-6),
+                      16.0e-6, 200.0),
     ]
 }
 
@@ -209,7 +211,7 @@ def get_liner(lid: str, lib=None) -> LinerMaterial:
     for m in getattr(lib, "liners", None) or []:
         if m.id == lid:
             return LinerMaterial(m.id, m.name, m.E, m.nu, m.yield_, m.ultimate, m.density, m.elongation,
-                                 m.fatigue_coeff, m.fatigue_exp, m.cte)
+                                 m.fatigue_coeff, m.fatigue_exp, m.cte, m.k_ic)
     if lid not in LINERS:
         raise KeyError(f"Unknown liner material '{lid}'")
     return LINERS[lid]
