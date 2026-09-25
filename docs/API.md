@@ -20,6 +20,7 @@ mass in g.
 | POST | `/api/tension-schedule` | `TensionScheduleRequest` | current vs recommended tensions for uniform prestress |
 | POST | `/api/optimise` | `OptimiseRequest` | `OptimiseResult`: minimum-mass layup with all blocking checks passing |
 | POST | `/api/calibrate` | `Project` (with `tests`) | `CalibrationResult`: measured vs predicted, suggested efficiency |
+| POST | `/api/sensitivity` | `{project, spec}` (scatter of fibre strength/modulus/tex, Vf, efficiency, liner yield/wall, cure temperature) | `SensitivityResult`: burst sd, 90 % lower bound, P(burst < required), per-input effect and variance share |
 | POST | `/api/suggest-cure` | `Project` | `{cure_cycle, result: CureResult, notes}`: shortest cure cycle meeting exotherm / degree of cure / Tg / liner temperature |
 | POST | `/api/continuous` | `Project` | `ContinuousResult`: transition between every pair of layers (kind, passes and their angles, slippage vs limit, fibre length/mass, phase dwell, 3D points); G-code winds these when `project.continuous.enabled` |
 | POST | `/api/progressive` | `{project, mesh}` | `ProgressiveResultOut`: progressive-failure burst, first IFF / FF / liner-yield pressures, events, pressure-strain curve, damage along z (10 s to minutes) |

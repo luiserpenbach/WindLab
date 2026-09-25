@@ -65,6 +65,14 @@ Example (1 L desktop vessel, `grbl-10mpa-1l`), hoop strain at the cylinder mid-p
 | Burst-test ramp to the median strength | P = 0.5; Weibull shape of the implied strength = beta | exact |
 | Life to target / allowed stress ratio | inverse of the failure probability | 1e-4 |
 
+## Burst sensitivity
+
+| Quantity | Reference | Agreement |
+|---|---|---|
+| Burst sd = root-sum-square of the per-input effects | FOSM definition | exact |
+| Zero scatter | sd = 0 | exact |
+| Desktop example: dominant input | fibre strength (fibre-dominated burst) | as expected |
+
 ## Cure
 
 | Quantity | Reference | Agreement |

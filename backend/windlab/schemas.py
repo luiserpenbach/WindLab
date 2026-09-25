@@ -398,6 +398,43 @@ class CureSuggestion(BaseModel):
     notes: list[str] = []
 
 
+class SensitivitySpec(BaseModel):
+    fiber_strength_cov: float = Field(0.05, ge=0, lt=0.5, description="Delivered fibre strength scatter (CoV)")
+    fiber_modulus_cov: float = Field(0.03, ge=0, lt=0.5)
+    tex_cov: float = Field(0.02, ge=0, lt=0.5, description="Fibre per band (linear density) scatter")
+    vf_sd: float = Field(0.015, ge=0, lt=0.2, description="Fibre volume fraction scatter (absolute sd)")
+    efficiency_cov: float = Field(0.03, ge=0, lt=0.5, description="Translation efficiency (process) scatter")
+    liner_yield_cov: float = Field(0.05, ge=0, lt=0.5)
+    liner_wall_sd: float = Field(0.05, ge=0, description="Liner wall thickness sd [mm]")
+    cure_temp_sd: float = Field(5.0, ge=0, description="Stress-free temperature sd [K]")
+
+
+class SensitivityRequest(BaseModel):
+    project: Project
+    spec: SensitivitySpec = SensitivitySpec()
+
+
+class SensitivityItem(BaseModel):
+    name: str
+    scatter: str
+    burst_minus: float  # burst at -1 sd [MPa]
+    burst_plus: float
+    effect: float  # burst change per +1 sd [MPa]
+    share: float  # share of the burst variance
+    note: str = ""
+
+
+class SensitivityResult(BaseModel):
+    nominal: float
+    sd: float
+    cov: float
+    lower_90: float
+    required: float
+    p_below_required: float
+    items: list[SensitivityItem]
+    notes: list[str] = []
+
+
 class RuptureGroup(BaseModel):
     group: str  # "hoop" | "helical"
     ratio_meop: float

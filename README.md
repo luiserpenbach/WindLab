@@ -75,6 +75,9 @@ truth for fields and units). Server-side saves go to `~/.windlab/projects`
   section) with Kamal-Sourour cure kinetics, vitrification (DiBenedetto Tg) and reaction heat; exotherm
   (vs. a non-reacting wall), peak liner temperature, final degree of cure and Tg vs the service temperature;
   editable cure cycles, generic kinetics per resin (calibrate with DSC).
+- **Burst sensitivity and statistical margin** (FOSM): burst standard deviation, 90 % lower bound and
+  probability of bursting below the requirement from fibre, process and liner scatter, with each input's
+  share of the variance (what to tighten first).
 - **Stress-rupture reliability**: Weibull power-law breakdown (Coleman/Phoenix, as in NASA COPV
   assessments) with cumulative damage over autofrettage, proof and service, credit for surviving the proof
   test, failure probability over the service life per ply group, allowed stress ratio and life to target.

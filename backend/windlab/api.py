@@ -215,6 +215,14 @@ def post_ccx_export(project: S.Project):
     return _design_errors(run)
 
 
+@app.post("/api/sensitivity", response_model=S.SensitivityResult)
+def post_sensitivity(req: S.SensitivityRequest):
+    """Burst scatter from material / process scatter (FOSM on the cylinder model, ~5-15 s)."""
+    from .core.sensitivity import analyse
+
+    return _design_errors(lambda: analyse(req.project, req.spec))
+
+
 @app.post("/api/suggest-cure", response_model=S.CureSuggestion)
 def post_suggest_cure(project: S.Project):
     """Shortest cure cycle meeting the exotherm, degree-of-cure, Tg and liner-temperature limits (seconds to ~1 min)."""
