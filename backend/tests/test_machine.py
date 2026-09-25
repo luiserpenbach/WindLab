@@ -19,8 +19,7 @@ def test_eye_lies_on_free_fibre_ray(sized_project, kind):
     which = _first(b, kind)
     mo = simulate_layer(b, b.layers[which])
     P = mo.contact
-    T = np.gradient(P, axis=0)
-    T /= np.linalg.norm(T, axis=1)[:, None]
+    T = mo.tangent
     th = np.radians(mo.a)
     c, s = np.cos(th), np.sin(th)
     # rotate contact + tangent into the world frame; the eye must be on that ray in the plane z = 0

@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "name": "Untitled COPV",
+  "notes": "",
+  "liner": {
+    "material": "AA6061-T6",
+    "radius": 100.0,
+    "cyl_length": 300.0,
+    "wall_thickness": 2.5,
+    "dome_type": "isotensoid",
+    "dome_aspect": 0.6,
+    "boss_radius_a": 20.0,
+    "boss_radius_b": 20.0,
+    "boss_length": 30.0,
+    "shaft_radius": 12.0,
+    "neck_thickness": null,
+    "neck_blend_radius": null
+  },
+  "requirements": {
+    "meop": 30.0,
+    "burst_factor": 1.5,
+    "proof_factor": 1.25,
+    "autofrettage_pressure": null,
+    "stress_ratio_limit": 0.6,
+    "design_cycles": 1000,
+    "fatigue_scatter_factor": 4.0,
+    "temperature_min": -40.0,
+    "temperature_max": 65.0,
+    "temperature_ref": 20.0
+  },
+  "composite": {
+    "fiber": "T700S-12K",
+    "resin": "Epoxy-DGEBA",
+    "fiber_volume_fraction": 0.6,
+    "translation_efficiency": 0.82,
+    "cure_temperature": 120.0
+  },
+  "materials": {
+    "fibers": [],
+    "resins": [],
+    "liners": []
+  },
+  "layers": [],
+  "machine": {
+    "name": "Generic 4-axis LinuxCNC",
+    "axes_count": 4,
+    "controller": "linuxcnc",
+    "carriage": {
+      "letter": "X",
+      "max_velocity": 20000.0,
+      "max_accel": 500.0,
+      "min": -50.0,
+      "max": 1500.0,
+      "scale": 1.0,
+      "invert": false
+    },
+    "mandrel": {
+      "letter": "A",
+      "max_velocity": 36000.0,
+      "max_accel": 720.0,
+      "min": null,
+      "max": null,
+      "scale": 1.0,
+      "invert": false
+    },
+    "crossfeed": {
+      "letter": "Y",
+      "max_velocity": 6000.0,
+      "max_accel": 300.0,
+      "min": 0.0,
+      "max": 300.0,
+      "scale": 1.0,
+      "invert": false
+    },
+    "eye": {
+      "letter": "B",
+      "max_velocity": 36000.0,
+      "max_accel": 1440.0,
+      "min": null,
+      "max": null,
+      "scale": 1.0,
+      "invert": false
+    },
+    "carriage_offset": 600.0,
+    "crossfeed_zero_radius": 0.0,
+    "eye_clearance": 15.0,
+    "fiber_speed": 100.0,
+    "tension_output": "m67",
+    "tension_scale": 1.0,
+    "rotary_reset": "layer",
+    "samples_per_pass": 160,
+    "pause_between_layers": true
+  },
+  "tests": []
+}

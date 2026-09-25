@@ -39,6 +39,7 @@ class Motion:
     free: np.ndarray  # free fibre length [mm]
     circuit_starts: list[int]
     warnings: list[str]
+    tangent: np.ndarray | None = None  # free-fibre direction at each contact (mandrel frame)
 
     @property
     def total_time(self) -> float:
@@ -57,7 +58,19 @@ def layer_path(b: Build, bl: BuiltLayer, samples: int | None = None) -> PathPoin
         path = hoop_layer_path(bl.base, bl.z_start, bl.z_end, bl.spec.band_width, bl.spec.passes, pitch=bl.pitch,
                                **kw)
     path.phi = path.phi + math.radians(bl.spec.start_angle)  # pattern clocking
-    return path
+    return _dedupe(path)
+
+
+def _dedupe(path: PathPoints) -> PathPoints:
+    """Drop consecutive duplicate points (zero-length segments break tangents and refinement)."""
+    P = path.xyz()
+    keep = np.concatenate([[True], np.linalg.norm(np.diff(P, axis=0), axis=1) > 1e-7])
+    if keep.all():
+        return path
+    new_index = np.cumsum(keep) - 1
+    starts = sorted({int(new_index[c]) for c in path.circuit_starts})
+    f = lambda a: None if a is None else a[keep]  # noqa: E731
+    return PathPoints(path.z[keep], path.r[keep], path.phi[keep], starts, f(path.alpha), f(path.lam), f(path.dwell))
 
 
 def profile_envelope(prof, xs: np.ndarray) -> np.ndarray:
@@ -92,14 +105,42 @@ def solid_radius(b: Build, bl: BuiltLayer, which: str = "top") -> tuple[np.ndarr
     return xs, g
 
 
+def _upper_concave_hull(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Smallest concave function >= y (monotone chain on the upper hull)."""
+    hull: list[int] = []
+    for i in range(len(x)):
+        while len(hull) >= 2:
+            i0, i1 = hull[-2], hull[-1]
+            # drop i1 if it lies below the chord i0 -> i
+            if (y[i1] - y[i0]) * (x[i] - x[i0]) <= (y[i] - y[i0]) * (x[i1] - x[i0]):
+                hull.pop()
+            else:
+                break
+        hull.append(i)
+    return np.interp(x, x[hull], y[hull])
+
+
 def eye_envelope(b: Build, bl: BuiltLayer) -> tuple[np.ndarray, np.ndarray]:
+    """Surface the eye travels on: concave hull of (part + bosses + shaft + clearance), floored by the machine.
+
+    Along any free-fibre ray the distance from the axis is convex in the ray parameter while a concave
+    envelope stays concave, so every ray crosses the envelope exactly once: the eye position is unique and
+    varies continuously (no jumps at hoop drop-offs or the boss shoulder).
+    """
     m = b.project.machine
+    lin = b.project.liner
     xs, g = solid_radius(b, bl)
     w = int(max(m.eye_clearance, 1.0))
-    # running max over +/- clearance keeps the clearance in all directions (approx.)
     pad = np.pad(g, w, mode="edge")
-    win = np.lib.stride_tricks.sliding_window_view(pad, 2 * w + 1).max(axis=1)
-    return xs, np.maximum(win + m.eye_clearance, min_eye_radius(m))
+    g = np.lib.stride_tricks.sliding_window_view(pad, 2 * w + 1).max(axis=1)  # eye body width
+    z0, z1 = float(bl.top.z.min()), float(bl.top.z.max())
+    lo, hi = z0 - lin.boss_length - 60.0, z1 + lin.boss_length + 60.0
+    inside = (xs >= lo) & (xs <= hi)
+    env = np.empty_like(g)
+    env[inside] = _upper_concave_hull(xs[inside], g[inside] + m.eye_clearance)
+    env[xs < lo] = env[inside][0]
+    env[xs > hi] = env[inside][-1]
+    return xs, np.maximum(env, min_eye_radius(m))
 
 
 def min_eye_radius(m: S.MachineSpec) -> float:
@@ -149,27 +190,105 @@ def plan_times(q: np.ndarray, fibre_step: np.ndarray, v_fibre: float, vmax: np.n
     return dt
 
 
+MAX_STEP_DEG = 5.0  # max mandrel rotation per G-code segment
+MAX_STEP_MM = 10.0  # max carriage travel per G-code segment
+
+
+def _refine(path: PathPoints, k: np.ndarray) -> PathPoints:
+    """Subdivide segment i of the path into k[i] pieces (linear in z, r, phi, alpha, lam)."""
+    n = len(path.z)
+    idx = np.concatenate([i + np.arange(k[i]) / k[i] for i in range(n - 1)] + [np.array([n - 1.0])])
+    base = np.arange(n, dtype=float)
+
+    def f(a):
+        return None if a is None else np.interp(idx, base, a.astype(float))
+
+    starts = [int(np.searchsorted(idx, c)) for c in path.circuit_starts]
+    dwell = None if path.dwell is None else np.interp(idx, base, path.dwell.astype(float)) > 0.5
+    return PathPoints(f(path.z), f(path.r), f(path.phi), starts, f(path.alpha), f(path.lam), dwell)
+
+
 def simulate_layer(b: Build, bl: BuiltLayer) -> Motion:
-    m = b.project.machine
+    """Machine motion for a layer, adaptively refined so that no G-code segment rotates the mandrel more
+    than MAX_STEP_DEG or moves the carriage more than MAX_STEP_MM (linear interpolation between samples
+    must not pull the fibre off its path)."""
     path = layer_path(b, bl)
-    P = path.xyz()
+    mo = _simulate(b, bl, path)
+    for _ in range(3):
+        k = np.maximum(np.ceil(np.abs(np.diff(mo.a)) / MAX_STEP_DEG),
+                       np.ceil(np.abs(np.diff(mo.x)) / MAX_STEP_MM)).astype(int)
+        if k.max() <= 1:
+            break
+        path = _refine(path, np.minimum(np.maximum(k, 1), 16))
+        mo = _simulate(b, bl, path)
+    da, dx = np.abs(np.diff(mo.a)), np.abs(np.diff(mo.x))
+    bad = (da > 2 * MAX_STEP_DEG) | (dx > 2 * MAX_STEP_MM)
+    if bad.any():
+        i = int(np.argmax(np.where(bad, da / MAX_STEP_DEG + dx / MAX_STEP_MM, 0)))
+        mo.warnings.append(f"Eye solution jumps {da[i]:.0f} deg / {dx[i]:.0f} mm in one segment near z = "
+                           f"{mo.contact[i, 0]:.0f} mm ({int(bad.sum())} segments): the clearance envelope forces "
+                           "a sudden eye repositioning there; check that region in the simulation")
+    return mo
+
+
+TANGENT_SMOOTHING = 6.0  # mm: the band bridges sub-band-width surface steps (hoop drop-offs)
+
+
+def _tangents(path: PathPoints, base, cyl_half: float) -> np.ndarray:
+    """Free-fibre directions, with the surface radius smoothed over a few mm of meridian.
+
+    Only the radius is replaced, by a smoothed function of the axial position (independent of the
+    direction of travel); near the turnarounds (near-circumferential fibre) the exact geometry is kept.
+    """
+    from scipy.ndimage import gaussian_filter1d
+
+    s = base.s
+    n = max(int(s[-1] / 0.5), 8)
+    sq = np.linspace(0.0, s[-1], n)
+    zq, rq = np.interp(sq, s, base.z), np.interp(sq, s, base.r)
+    r_s = gaussian_filter1d(rq, TANGENT_SMOOTHING / (sq[1] - sq[0]), mode="nearest")
+    order = np.argsort(zq)
+    r_path = np.interp(path.z, zq[order], r_s[order])
+    # smooth only on the cylinder section (single-valued profile; that is where hoop drop-offs are),
+    # blending to the exact geometry over 10 mm towards the domes and near-circumferential fibre
+    ext = 0.3 * float(np.max(base.r))
+    w = np.clip((cyl_half + ext - np.abs(path.z)) / (0.4 * ext), 0.0, 1.0)
+    w = w * np.clip((np.cos(path.alpha) if path.alpha is not None else np.ones_like(path.z)) / 0.2, 0.0, 1.0)
+    r_use = w * r_path + (1 - w) * path.r
+    P = np.stack([path.z, r_use * np.cos(path.phi), -r_use * np.sin(path.phi)], axis=1)
     T = np.gradient(P, axis=0)
-    T /= np.maximum(np.linalg.norm(T, axis=1), 1e-12)[:, None]
+    return T / np.maximum(np.linalg.norm(T, axis=1), 1e-12)[:, None]
+
+
+def _simulate(b: Build, bl: BuiltLayer, path: PathPoints) -> Motion:
+    m = b.project.machine
+    P = path.xyz()
+    T = _tangents(path, bl.base, b.project.liner.cyl_length / 2)
     xs, env = eye_envelope(b, bl)
     if m.axes_count == 2:
         # no crossfeed: the eye runs at one fixed radius clearing everything it passes
         env = np.full_like(env, float(env[(xs > P[:, 0].min() - 50) & (xs < P[:, 0].max() + 50)].max()))
 
-    # vectorised bisection for the free fibre length lam
-    lo = np.zeros(len(P))
-    hi = np.full(len(P), 5000.0)
-
     def h(lam: np.ndarray) -> np.ndarray:
         Q = P[:, 1:] + lam[:, None] * T[:, 1:]
         return np.linalg.norm(Q, axis=1) - np.interp(P[:, 0] + lam * T[:, 0], xs, env)
 
-    unreachable = h(hi) < 0
-    for _ in range(60):
+    # first point along the ray that is outside the envelope: coarse scan, then bisection in that interval
+    grid = np.concatenate([np.linspace(0.0, 400.0, 81)[1:], np.linspace(420.0, 5000.0, 230)])
+    hi = np.full(len(P), 5000.0)
+    lo = np.zeros(len(P))
+    found = np.zeros(len(P), dtype=bool)
+    prev = 0.0
+    for g_ in grid:
+        ok = (~found) & (h(np.full(len(P), g_)) >= 0)
+        hi = np.where(ok, g_, hi)
+        lo = np.where(ok, prev, lo)
+        found |= ok
+        prev = g_
+        if found.all():
+            break
+    unreachable = ~found
+    for _ in range(40):
         mid = 0.5 * (lo + hi)
         pos = h(mid) > 0
         hi = np.where(pos, mid, hi)
@@ -211,7 +330,8 @@ def simulate_layer(b: Build, bl: BuiltLayer) -> Motion:
     if clear < -2.0:
         warnings.append(f"Free fibre cuts {-clear:.1f} mm into earlier build-up/boss near z = {z_hit:.0f} mm: it will "
                         "rub or bridge there; review turnaround offsets and the boss shoulder")
-    return Motion(bl, t, x_eye, y_eye, np.degrees(theta), np.degrees(beta), P, free, path.circuit_starts, warnings)
+    return Motion(bl, t, x_eye, y_eye, np.degrees(theta), np.degrees(beta), P, free, path.circuit_starts, warnings,
+                  T)
 
 
 def free_fibre_clearance(b: Build, bl: BuiltLayer, P: np.ndarray, T: np.ndarray, lam: np.ndarray,
