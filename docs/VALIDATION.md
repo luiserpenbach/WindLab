@@ -126,6 +126,11 @@ The progressive model resolves effects the cylinder model cannot, and it changed
 
 ## Not validated (yet)
 
+- Fibre bridging over concave meridional regions (the flank beside a thick polar build-up) is detected
+  (layer bridging check, free-fibre clearance warnings) but not modelled in the machine kinematics: the eye
+  is placed for the fibre following the surface. Continuous-winding transitions that leave a helical
+  turnaround on top of its own build-up ridge report such warnings; review them in the simulation.
+
 - The Abaqus deck has not been run in Abaqus (no licence available to the authors); the independent FE
   check is the CalculiX axisymmetric solid comparison above. The Abaqus deck (conventions reviewed: SAX1 DOFs, normals, ply
   order, OFFSET, per-element pressure scaling).
