@@ -1,11 +1,14 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Icon } from '../components/Icon';
 import { Spinner } from '../components/ui';
 import { useAnalysis } from '../state/analysis';
 import { playback } from '../state/playback';
 import { useProject } from '../state/projectStore';
 import { useUi } from '../state/uiStore';
+import { layerColors } from './colors';
+import { colorPath, cssGradient, DWELL_COLOR, utilColor, UTIL_FAIL, viridis, type PathColoring } from './colormaps';
 import { VesselViewer } from './VesselViewer';
+import { sig } from '../util/format';
 
 function cssVar(name: string, fallback: string): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -71,9 +74,26 @@ export function Viewport() {
     viewer.current?.setLayerCutoff(simMode ? (ui.sim?.layer_id ?? ui.path?.layer_id ?? null) : null);
   }, [simMode, ui.sim, ui.path, result]);
 
+  // Path colouring: layer colour, or per-point winding angle / slippage utilisation.
+  const pathLayerId = ui.path?.layer_id ?? null;
+  const layerColor = useMemo(
+    () => (pathLayerId ? layerColors(project.layers).get(pathLayerId) : undefined),
+    [project.layers, pathLayerId],
+  );
+  // Friction of the analysed layer (falls back to the current input).
+  const lr = result?.layers.find((l) => l.id === pathLayerId);
+  const friction = lr?.friction ?? project.layers.find((l) => l.id === pathLayerId)?.friction ?? 0;
+  // Dwell points need more slippage than the domes; those are informational.
+  const dwellCut =
+    lr && lr.type === 'helical' ? Math.max(Math.abs(lr.slippage_a), Math.abs(lr.slippage_b)) + 1e-3 : null;
+  const coloring = useMemo(
+    () => colorPath(ui.path, ui.pathColor, friction, dwellCut),
+    [ui.path, ui.pathColor, friction, dwellCut],
+  );
+
   useEffect(() => {
-    viewer.current?.setPath(simMode ? ui.path : null);
-  }, [ui.path, simMode]);
+    viewer.current?.setPath(simMode ? ui.path : null, layerColor, coloring?.colors ?? null);
+  }, [ui.path, simMode, layerColor, coloring]);
 
   useEffect(() => {
     viewer.current?.setSimulation(simMode ? ui.sim : null, project.machine);
@@ -141,12 +161,52 @@ export function Viewport() {
         <span>
           <i className="sw hoop" /> hoop
         </span>
-        {simMode && ui.sim ? (
+        {simMode && ui.sim && !coloring ? (
           <span>
             <i className="sw fibre" /> fibre
           </span>
         ) : null}
       </div>
+      {simMode && coloring ? <ColorLegend c={coloring} /> : null}
+    </div>
+  );
+}
+
+function ColorLegend({ c }: { c: PathColoring }) {
+  const angle = c.mode === 'alpha';
+  const fmt = (v: number) => (Number.isFinite(v) ? (angle ? `${sig(v, 3)}°` : sig(v, 2)) : '∞');
+  const [lo, hi] = c.domain;
+  const failPos = ((UTIL_FAIL - lo) / (hi - lo)) * 100;
+  return (
+    <div className="color-legend" role="img" aria-label={`Path colour scale, ${fmt(c.min)} to ${fmt(c.max)}`}>
+      <div className="cl-title">{angle ? 'Winding angle α' : 'Slippage utilisation |λ|/μ'}</div>
+      <div
+        className="cl-bar"
+        style={{ background: cssGradient(angle ? viridis : (t) => utilColor(lo + t * (hi - lo))) }}
+      >
+        {!angle ? <i className="cl-tick" style={{ left: `${failPos}%` }} title="Friction limit (1.0)" /> : null}
+      </div>
+      <div className="cl-scale">
+        <span>{fmt(lo)}</span>
+        {angle ? (
+          <span>{fmt(hi)}</span>
+        ) : (
+          <span style={{ left: `${failPos}%` }} className="cl-mid" title="Friction limit: |λ| = μ">
+            1
+          </span>
+        )}
+      </div>
+      <div className="cl-range">
+        min {fmt(c.min)} · max {fmt(c.max)}
+      </div>
+      {c.dwellPoints ? (
+        <div
+          className="cl-range"
+          title="Slippage a dwell on the turnaround circle would need: informational, the dwell happens on the boss neck"
+        >
+          <i className="sw" style={{ background: DWELL_COLOR }} /> turnaround dwell (info only)
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -131,6 +131,38 @@ def liner_profiles(spec: LinerSpec, n_dome: int = 240, n_cyl: int = 60) -> tuple
     return outer, inner
 
 
+def clean_offset(prof: Profile, half: float) -> Profile:
+    """Remove the swallow-tail loops a thick normal offset creates on strongly curved domes.
+
+    Each dome is star-shaped about its centre on the axis (z = +/-half), so the
+    outer boundary is the maximum distance per polar angle; points are also
+    kept monotone in polar angle so the polyline never runs backwards. Point
+    count and order are preserved (index correspondence with the liner).
+    """
+    z, r = prof.z.copy(), prof.r.copy()
+    for sign in (-1.0, 1.0):
+        side = np.nonzero(sign * z > half)[0]
+        if len(side) < 3:
+            continue
+        side = side if sign > 0 else side[::-1]  # walk from the equator towards the pole
+        dz = sign * (z[side] - sign * half)
+        th = np.arctan2(r[side], dz)  # pi/2 at the equator, decreasing towards the pole
+        rho = np.hypot(r[side], dz)
+        th_m = np.minimum.accumulate(th)
+        # envelope: max rho per polar angle bin
+        bins = np.linspace(th.min() - 1e-9, th.max() + 1e-9, 2001)
+        k = np.clip(np.searchsorted(bins, th) - 1, 0, len(bins) - 2)
+        env = np.zeros(len(bins) - 1)
+        np.maximum.at(env, k, rho)
+        filled = env > 0
+        centres = 0.5 * (bins[1:] + bins[:-1])
+        env_i = np.interp(th_m, centres[filled], env[filled])
+        rho_new = np.maximum(env_i, np.where(th_m == th, rho, 0.0))
+        z[side] = sign * half + sign * rho_new * np.cos(th_m)
+        r[side] = rho_new * np.sin(th_m)
+    return Profile(z, r)
+
+
 def liner_thickness(spec: LinerSpec, outer: Profile) -> np.ndarray:
     """Wall thickness along the meridian: constant, thickening smoothly into the boss necks."""
     t = np.full_like(outer.z, spec.wall_thickness)

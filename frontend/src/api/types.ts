@@ -30,6 +30,10 @@ export interface LinerSpec {
   boss_length: number;
   /** Winding shaft radius beyond the bosses [mm] */
   shaft_radius: number;
+  /** Liner wall thickness at the boss [mm]; null = 3 x wall thickness */
+  neck_thickness: number | null;
+  /** Radius where the wall starts thickening towards the boss [mm]; null = auto */
+  neck_blend_radius: number | null;
 }
 
 export interface Requirements {
@@ -66,6 +70,8 @@ export interface PatternChoice {
 }
 
 export type LayerType = 'hoop' | 'helical';
+export type WindingType = 'geodesic' | 'non-geodesic';
+export type BandShape = 'rectangular' | 'lenticular' | 'elliptical';
 
 export interface Layer {
   id: string;
@@ -76,8 +82,16 @@ export interface Layer {
   /** Total band tension [N] */
   tension: number;
   // helical
-  /** Extra turnaround radius beyond boss + band/2 [mm] */
+  /** Helical path type; non-geodesic uses friction to steer the fibre on the domes */
+  winding: WindingType;
+  /** Non-geodesic: winding angle on the cylinder [deg], 0 < a < 85; null = auto (balanced slippage) */
+  angle: number | null;
+  /** Available fibre/surface friction coefficient mu (max |kg/kn|), 0..1 */
+  friction: number;
+  /** Extra turnaround radius beyond boss + band/2 at end A (and B if unset) [mm] */
   turnaround_offset: number;
+  /** Extra turnaround radius at end B [mm]; null = same as end A */
+  turnaround_offset_b: number | null;
   /** null = auto-select best pattern */
   pattern: PatternChoice | null;
   /** Max dwell per turnaround [deg], 0..360 */
@@ -90,6 +104,8 @@ export interface Layer {
   end_offset_b: number;
   /** Override cured layer thickness in the cylinder [mm] */
   thickness_override: number | null;
+  /** Band cross-section used by the band-level thickness simulation */
+  band_shape: BandShape;
 }
 
 export interface MachineAxis {
@@ -185,6 +201,19 @@ export interface LayerResult {
   thickness: number;
   band_thickness: number;
   turnaround_radius: number | null;
+  winding: WindingType;
+  /** Turnaround radius end A [mm] (null for hoop) */
+  turnaround_a: number | null;
+  /** Turnaround radius end B [mm] (null for hoop) */
+  turnaround_b: number | null;
+  /** Signed slippage coefficient kg/kn used on dome A */
+  slippage_a: number;
+  /** Signed slippage coefficient kg/kn used on dome B */
+  slippage_b: number;
+  /** Slippage a dwell on the turnaround circle would need (informational) */
+  dwell_slippage: number;
+  /** Friction coefficient mu of the layer */
+  friction: number;
   z_start: number;
   z_end: number;
   /** x = z [mm], y = thickness [mm] */
@@ -238,6 +267,32 @@ export interface StructuralResult {
   dome_fiber_stress: Curve;
 }
 
+/** Axisymmetric shell FE of the whole vessel at MEOP (linear elastic operating cycle). */
+export interface FEResult {
+  /** Element mid axial position [mm] */
+  z: number[];
+  r: number[];
+  /** Liner von Mises at the inner surface, MEOP [MPa] */
+  liner_vm_inner: number[];
+  liner_vm_outer: number[];
+  /** Per layer: fibre strain / allowable at MEOP along z (null where the layer is absent) */
+  fiber_ratio: (number | null)[][];
+  fiber_ratio_max: number[];
+  node_z: number[];
+  node_r: number[];
+  /** Nodal radial displacement at MEOP [mm] */
+  radial_displacement: number[];
+  axial_displacement: number[];
+  /** Burst estimate including the domes [MPa] */
+  dome_burst: number;
+  critical_z: number;
+  critical_layer: string | null;
+  /** Peak liner stress range / cylinder value */
+  liner_hotspot_factor: number;
+  liner_hotspot_z: number;
+  liner_hotspot_cycles: number;
+}
+
 export interface MassResult {
   liner: number;
   fiber: number;
@@ -254,6 +309,8 @@ export interface AnalysisResult {
   liner_inner: Curve;
   layers: LayerResult[];
   structural: StructuralResult | null;
+  /** Shell FE results (optional; absent when not computed) */
+  fe?: FEResult | null;
   mass: MassResult;
   checks: Check[];
 }
@@ -264,6 +321,10 @@ export interface PathResult {
   points: number[][];
   /** Indices where each circuit starts */
   circuit_breaks: number[];
+  /** Winding angle at each point [deg] */
+  alpha: number[];
+  /** Slippage coefficient kg/kn at each point */
+  slippage: number[];
 }
 
 export interface MachineFrame {

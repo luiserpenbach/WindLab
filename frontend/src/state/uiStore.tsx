@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { PathResult, SimulationResult } from '../api/types';
+import type { PathColorMode } from '../viewer/colormaps';
 
 export type StepId = 'vessel' | 'materials' | 'layup' | 'analysis' | 'machine' | 'simulate' | 'export';
 
@@ -36,6 +37,9 @@ interface UiState {
   setPath: (p: PathResult | null) => void;
   sim: SimulationResult | null;
   setSim: (s: SimulationResult | null) => void;
+  /** How the fibre path is coloured in the 3D view. */
+  pathColor: PathColorMode;
+  setPathColor: (m: PathColorMode) => void;
 }
 
 const Ctx = createContext<UiState | null>(null);
@@ -77,6 +81,9 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const [view, setViewState] = useState<ViewOptions>({ section: false, showLayers: true, showGrid: true });
   const [path, setPath] = useState<PathResult | null>(null);
   const [sim, setSim] = useState<SimulationResult | null>(null);
+  const [pathColor, setPathColorState] = useState<PathColorMode>(() =>
+    readLS('windlab.pathColor', ['layer', 'alpha', 'slip'] as const, 'layer'),
+  );
 
   useEffect(() => {
     const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
@@ -103,6 +110,10 @@ export function UiProvider({ children }: { children: ReactNode }) {
     () => setTheme((t) => (t === 'system' ? (systemDark() ? 'light' : 'dark') : t === 'dark' ? 'light' : 'dark')),
     [],
   );
+  const setPathColor = useCallback((m: PathColorMode) => {
+    setPathColorState(m);
+    writeLS('windlab.pathColor', m);
+  }, []);
   const setView = useCallback((patch: Partial<ViewOptions>) => setViewState((v) => ({ ...v, ...patch })), []);
 
   const value = useMemo<UiState>(
@@ -120,8 +131,23 @@ export function UiProvider({ children }: { children: ReactNode }) {
       setPath,
       sim,
       setSim,
+      pathColor,
+      setPathColor,
     }),
-    [step, setStep, selectedLayerId, theme, resolvedTheme, cycleTheme, view, setView, path, sim],
+    [
+      step,
+      setStep,
+      selectedLayerId,
+      theme,
+      resolvedTheme,
+      cycleTheme,
+      view,
+      setView,
+      path,
+      sim,
+      pathColor,
+      setPathColor,
+    ],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

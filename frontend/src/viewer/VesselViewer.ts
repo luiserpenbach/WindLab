@@ -36,6 +36,8 @@ export interface VesselData {
 
 interface SimVisual {
   sim: SimulationResult;
+  /** For each simulation frame, the index of the nearest path point (cached per path). */
+  pathIndex: { path: PathResult; idx: Int32Array } | null;
   laid: THREE.Line;
   laidPos: Float32Array;
   free: THREE.Line;
@@ -44,6 +46,50 @@ interface SimVisual {
   carriage: THREE.Group;
   arm: THREE.Mesh;
   railY: number;
+}
+
+const FIBRE_COLOR = '#e34948';
+
+/**
+ * Map every contact point of a simulation to the nearest point of the fibre
+ * path. Both run along the same fibre in the same order, so the search is a
+ * window around the arclength-proportional guess instead of all-pairs.
+ */
+function mapContactsToPath(contact: number[][], points: number[][]): Int32Array {
+  const cum = (pts: number[][]) => {
+    const s = new Float64Array(pts.length);
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      s[i] = s[i - 1] + Math.hypot((b[0] ?? 0) - (a[0] ?? 0), (b[1] ?? 0) - (a[1] ?? 0), (b[2] ?? 0) - (a[2] ?? 0));
+    }
+    return s;
+  };
+  const sc = cum(contact);
+  const sp = cum(points);
+  const tc = sc[sc.length - 1] || 1;
+  const tp = sp[sp.length - 1] || 1;
+  const n = points.length;
+  const w = Math.max(24, Math.ceil(n / 60));
+  const out = new Int32Array(contact.length);
+  let g = 0;
+  for (let i = 0; i < contact.length; i++) {
+    const target = (sc[i] / tc) * tp;
+    while (g < n - 1 && sp[g + 1] <= target) g++;
+    const c = contact[i];
+    let best = g;
+    let bd = Infinity;
+    for (let k = Math.max(0, g - w); k <= Math.min(n - 1, g + w); k++) {
+      const q = points[k];
+      const d = ((q[0] ?? 0) - (c[0] ?? 0)) ** 2 + ((q[1] ?? 0) - (c[1] ?? 0)) ** 2 + ((q[2] ?? 0) - (c[2] ?? 0)) ** 2;
+      if (d < bd) {
+        bd = d;
+        best = k;
+      }
+    }
+    out[i] = best;
+  }
+  return out;
 }
 
 function disposeTree(o: THREE.Object3D) {
@@ -183,6 +229,9 @@ export class VesselViewer {
   private span: [number, number] = [-250, 250];
   private sectionPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
   private simVis: SimVisual | null = null;
+  private pathData: PathResult | null = null;
+  /** Linear-RGB vertex colours of the path (null = plain colour). */
+  private pathColors: Float32Array | null = null;
   private currentTime = 0;
   private hasFitted = false;
   private theme: ViewerTheme = { background: '#f4f4f2', grid: '#d8d7d0', gridCenter: '#b8b7ae', text: '#333' };
@@ -266,24 +315,43 @@ export class VesselViewer {
     this.invalidate();
   }
 
-  setPath(p: PathResult | null, color = '#e34948') {
+  /**
+   * Show a fibre path. `colors` (sRGB 0..1, 3 per point) switches to per-vertex
+   * colouring; the laid fibre of a running simulation then uses the same colours.
+   */
+  setPath(p: PathResult | null, color = FIBRE_COLOR, colors: Float32Array | null = null) {
     clearGroup(this.pathGroup);
+    this.pathData = p;
+    this.pathColors = null;
     if (p && p.points.length > 1) {
       const pos = new Float32Array(p.points.length * 3);
       p.points.forEach((q, i) => this.lift(q, pos, i * 3, 0.25));
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-      const hasSim = !!this.simVis;
+      if (colors && colors.length === pos.length) {
+        const lin = new Float32Array(colors.length);
+        const c = new THREE.Color();
+        for (let i = 0; i < colors.length; i += 3) {
+          c.setRGB(colors[i], colors[i + 1], colors[i + 2], THREE.SRGBColorSpace);
+          lin[i] = c.r;
+          lin[i + 1] = c.g;
+          lin[i + 2] = c.b;
+        }
+        g.setAttribute('color', new THREE.BufferAttribute(lin, 3));
+        this.pathColors = lin;
+      }
       const m = new THREE.LineBasicMaterial({
-        color,
+        color: this.pathColors ? '#ffffff' : color,
+        vertexColors: !!this.pathColors,
         transparent: true,
-        opacity: hasSim ? 0.28 : 0.95,
+        opacity: this.pathOpacity(),
         depthWrite: false,
       });
       const line = new THREE.Line(g, m);
       line.name = 'path';
       this.pathGroup.add(line);
     }
+    this.colorLaidFibre();
     this.applyClipping();
     this.invalidate();
   }
@@ -299,7 +367,8 @@ export class VesselViewer {
     if (sim && sim.frames.t.length && machine) this.buildMachine(sim);
     // dim the static path once a simulation is present
     const pathLine = this.pathGroup.getObjectByName('path') as THREE.Line | undefined;
-    if (pathLine) (pathLine.material as THREE.LineBasicMaterial).opacity = this.simVis ? 0.28 : 0.95;
+    if (pathLine) (pathLine.material as THREE.LineBasicMaterial).opacity = this.pathOpacity();
+    this.colorLaidFibre();
     this.applyClipping();
     this.setTime(this.currentTime);
   }
@@ -374,6 +443,43 @@ export class VesselViewer {
   }
 
   // ---------------------------------------------------------------- internals
+  private pathOpacity(): number {
+    if (!this.simVis) return 0.95;
+    // coloured paths stay readable behind the laid fibre
+    return this.pathColors ? 0.45 : 0.28;
+  }
+
+  /** Colour the laid (simulated) fibre like the path, or plain red. */
+  private colorLaidFibre() {
+    const v = this.simVis;
+    if (!v) return;
+    const g = v.laid.geometry;
+    const mat = v.laid.material as THREE.LineBasicMaterial;
+    const p = this.pathData;
+    const colors = this.pathColors;
+    const contact = v.sim.frames.contact;
+    if (p && colors && p.layer_id === v.sim.layer_id && p.points.length > 1 && contact.length) {
+      if (!v.pathIndex || v.pathIndex.path !== p) v.pathIndex = { path: p, idx: mapContactsToPath(contact, p.points) };
+      const idx = v.pathIndex.idx;
+      const n = v.laidPos.length / 3;
+      const lc = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        const j = (idx[i] ?? 0) * 3;
+        lc[i * 3] = colors[j];
+        lc[i * 3 + 1] = colors[j + 1];
+        lc[i * 3 + 2] = colors[j + 2];
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(lc, 3));
+      mat.vertexColors = true;
+      mat.color.set('#ffffff');
+    } else {
+      if (g.getAttribute('color')) g.deleteAttribute('color');
+      mat.vertexColors = false;
+      mat.color.set(FIBRE_COLOR);
+    }
+    mat.needsUpdate = true;
+  }
+
   private lift(q: number[], out: Float32Array, o: number, dr: number) {
     const x = q[0] ?? 0;
     const y = q[1] ?? 0;
@@ -717,7 +823,7 @@ export class VesselViewer {
     const lg = new THREE.BufferGeometry();
     lg.setAttribute('position', new THREE.BufferAttribute(laidPos, 3));
     lg.setDrawRange(0, 1);
-    const laid = new THREE.Line(lg, new THREE.LineBasicMaterial({ color: '#e34948' }));
+    const laid = new THREE.Line(lg, new THREE.LineBasicMaterial({ color: FIBRE_COLOR }));
     laid.frustumCulled = false;
     this.mandrelGroup.add(laid);
 
@@ -762,6 +868,6 @@ export class VesselViewer {
     free.frustumCulled = false;
     this.machineGroup.add(free);
 
-    this.simVis = { sim, laid, laidPos, free, eye, roller, carriage, arm, railY };
+    this.simVis = { sim, pathIndex: null, laid, laidPos, free, eye, roller, carriage, arm, railY };
   }
 }

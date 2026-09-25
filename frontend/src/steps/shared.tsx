@@ -4,6 +4,13 @@ import { sig } from '../util/format';
 
 const ORDER: Record<Status, number> = { fail: 0, warn: 1, info: 2, ok: 3 };
 
+/** The most severe check of a list (fail > warn > info > ok), or null. */
+export function worstCheck(checks: Check[]): Check | null {
+  let w: Check | null = null;
+  for (const c of checks) if (!w || ORDER[c.status] < ORDER[w.status]) w = c;
+  return w;
+}
+
 export function ChecksList({
   checks,
   title = 'Checks',

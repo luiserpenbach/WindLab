@@ -9,7 +9,7 @@ import numpy as np
 
 from .. import schemas as S
 from . import patterns as pat
-from .geometry import GeometryError, Profile, liner_profiles
+from .geometry import GeometryError, Profile, clean_offset, liner_profiles
 from .materials import Fiber, Ply, band_thickness, get_fiber, get_liner, get_resin, ply_properties
 from .structural import (
     Liner,
@@ -78,6 +78,8 @@ class Build:
     fiber: Fiber
     ply: Ply
     layers: list[BuiltLayer]
+    tension: Optional[dict] = None  # layer index -> (winding stress, residual, loss)
+    path_errors: dict = field(default_factory=dict)  # layer id -> reason its requested path failed
 
     @property
     def outer(self) -> Profile:
@@ -96,6 +98,7 @@ def build(project: S.Project) -> Build:
     half = lin.cyl_length / 2.0
 
     layers: list[BuiltLayer] = []
+    path_errors: dict[str, str] = {}
     surf = outer
     for i, L in enumerate(project.layers):
         t_b = band_thickness(fiber, L.tows, L.band_width, comp.fiber_volume_fraction)
@@ -117,7 +120,13 @@ def build(project: S.Project) -> Build:
                                         "winding to turn closer to the smaller boss")
                 else:
                     a_mid = math.radians(L.angle) if L.angle else None
-                    gp = paths.non_geodesic(surf, half, a_mid, r_a, r_b)
+                    try:
+                        gp = paths.non_geodesic(surf, half, a_mid, r_a, r_b)
+                    except GeometryError as e:
+                        # keep the analysis alive: fall back to a geodesic path and flag the layer
+                        gp = paths.geodesic(surf, max(r_a, r_b))
+                        path_errors[L.id] = str(e)
+                        warnings.append(f"Non-geodesic path not feasible ({e}); showing a geodesic path instead")
                     r0 = gp.r0
             except GeometryError as e:
                 raise DesignError(f"Layer {i + 1}: {e}") from e
@@ -142,7 +151,7 @@ def build(project: S.Project) -> Build:
                 warnings.append("No pattern within the dwell limit; using the best available")
             t_cyl = L.thickness_override or 2 * t_b * chosen.coverage
             t = gp.thickness(surf, t_cyl, R_mid, L.band_width)
-            bl = BuiltLayer(L, i, surf, surf.offset(t), t, t_cyl, t_b, angle, R_mid, r0, gp, chosen, cands,
+            bl = BuiltLayer(L, i, surf, clean_offset(surf.offset(t), half), t, t_cyl, t_b, angle, R_mid, r0, gp, chosen, cands,
                             float(surf.z[0]), float(surf.z[-1]), warnings)
         else:
             z_s, z_e = -half + L.end_offset_a, half - L.end_offset_b
@@ -153,11 +162,11 @@ def build(project: S.Project) -> Build:
             edge = np.minimum(surf.z - z_s, z_e - surf.z)
             t = t_h * np.clip(0.5 + edge / L.band_width, 0.0, 1.0) * (np.abs(n[:, 1]) > 0.9)
             angle = math.atan2(2 * math.pi * R_mid, L.band_width)
-            bl = BuiltLayer(L, i, surf, surf.offset(t), t, t_h, t_b, angle, R_mid, z_start=z_s, z_end=z_e,
+            bl = BuiltLayer(L, i, surf, clean_offset(surf.offset(t), half), t, t_h, t_b, angle, R_mid, z_start=z_s, z_end=z_e,
                             warnings=warnings)
         layers.append(bl)
         surf = bl.top
-    return Build(project, outer, inner, fiber, ply, layers)
+    return Build(project, outer, inner, fiber, ply, layers, path_errors=path_errors)
 
 
 # --------------------------------------------------------------------------- structural
@@ -344,8 +353,14 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
                            detail="Geodesic paths use one turnaround radius, set by the larger boss."))
     for bl in b.layers:
         for w in bl.warnings:
+            if w.startswith("Non-geodesic path not feasible"):
+                continue
             out.append(S.Check(id=f"layer.{bl.spec.id}", label=f"Layer {bl.index + 1}", status="warn", detail=w))
     for bl in b.layers:
+        if bl.spec.id in b.path_errors:
+            out.append(S.Check(id=f"layer.{bl.spec.id}.path", label=f"Layer {bl.index + 1} path", status="fail",
+                               detail=b.path_errors[bl.spec.id]))
+            continue
         if bl.gp is None or bl.spec.winding != "non-geodesic":
             continue
         lam = max(abs(bl.gp.lam_a), abs(bl.gp.lam_b))
@@ -388,6 +403,23 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
     out.append(_chk("fatigue", "Liner fatigue life", st.liner_fatigue_cycles >= need,
                     value=st.liner_fatigue_cycles, limit=need, unit="cycles",
                     detail="SWT estimate with indicative S-N data; confirm by test."))
+    tr = extra.get("tension")
+    if tr is not None and len(tr.loss):
+        worst = int(np.argmax(tr.loss))
+        out.append(_chk("tension.loss", "Winding prestress retained", tr.loss[worst] <= 0.6, warn=tr.residual_stress[worst] > 0,
+                        value=float(tr.loss[worst]), limit=0.6,
+                        detail=f"Layer {worst + 1} loses {tr.loss[worst] * 100:.0f}% of its winding prestress as later "
+                               "layers compress it (slack inner layers wrinkle). Use the tension schedule."))
+    bridging = [(bl, normal_curvature(bl)[1]) for bl in b.layers if bl.gp is not None]
+    bridging = [(bl, L) for bl, L in bridging if L > 2.0]
+    if bridging:
+        worst = max(bridging, key=lambda x: x[1])
+        names = ", ".join(str(bl.index + 1) for bl, _ in bridging)
+        out.append(S.Check(id="layup.bridging", label="Fibre bridging", status="warn", value=worst[1], unit="mm",
+                           detail=f"Layers {names} cross concave surface (negative normal curvature) near their "
+                                  f"turnarounds and will bridge (worst {worst[1]:.0f} mm per pass, layer "
+                                  f"{worst[0].index + 1}). Adjust turnaround offsets so turnarounds do not land "
+                                  "just inside earlier build-up ridges."))
     fe = extra.get("fe")
     if fe is not None:
         half = b.project.liner.cyl_length / 2
@@ -413,7 +445,15 @@ def analyze(project: S.Project) -> S.AnalysisResult:
     st: Optional[S.StructuralResult] = None
     extra: dict = {}
     if b.layers:
-        st, extra = structural(b)
+        from . import tension
+
+        tr = tension.analyse(b)
+        b.tension = {i: (float(tr.winding_stress[i]), float(tr.residual_stress[i]), float(tr.loss[i]))
+                      for i in range(len(b.layers))}
+        extra["tension"] = tr
+    if b.layers:
+        st, st_extra = structural(b)
+        extra.update(st_extra)
     layer_results = [layer_result(b, bl) for bl in b.layers]
     fe = None
     if st is not None:
@@ -451,6 +491,21 @@ def fe_result(b: Build, st: S.StructuralResult) -> S.FEResult:
     )
 
 
+def normal_curvature(bl: BuiltLayer) -> tuple[float, float]:
+    """Min fibre normal curvature along one pass and the path length where it is negative
+    (the fibre bridges over concave surface instead of lying on it)."""
+    if bl.gp is None:
+        return 1.0 / max(bl.R_mid, 1e-9), 0.0
+    tab = paths.SurfaceTable(bl.base)
+    gp = bl.gp
+    v = tab.at(np.asarray(gp.s))
+    r = np.maximum(v[:, 0], 1e-6)
+    kn = v[:, 3] * np.cos(gp.alpha) ** 2 + v[:, 2] / r * np.sin(gp.alpha) ** 2
+    dl = np.sqrt(np.diff(gp.z) ** 2 + np.diff(gp.r) ** 2 + (0.5 * (gp.r[1:] + gp.r[:-1]) * np.diff(gp.phi)) ** 2)
+    neg = (kn[1:] < -1e-5) & (kn[:-1] < -1e-5)
+    return float(kn.min()), float(dl[neg].sum())
+
+
 def _pattern_out(p: pat.Pattern) -> S.PatternCandidate:
     return S.PatternCandidate(
         n_bands=p.n_bands, shift=p.shift, pattern_number=p.pattern_number,
@@ -465,6 +520,8 @@ def layer_result(b: Build, bl: BuiltLayer) -> S.LayerResult:
     fiber_g = L_mm / 1e6 * bl.spec.tows * b.fiber.tex
     resin_g = fiber_g / b.fiber.density * (1 - comp.fiber_volume_fraction) / comp.fiber_volume_fraction * resin.density
     speed = b.project.machine.fiber_speed
+    kn_min, bridge = normal_curvature(bl)
+    ten = b.tension.get(bl.index) if b.tension else None
     return S.LayerResult(
         id=bl.spec.id,
         index=bl.index,
@@ -480,6 +537,11 @@ def layer_result(b: Build, bl: BuiltLayer) -> S.LayerResult:
         slippage_b=bl.gp.lam_b if bl.gp else 0.0,
         dwell_slippage=max(bl.gp.dwell_slip_a, bl.gp.dwell_slip_b) if bl.gp else 0.0,
         friction=bl.spec.friction,
+        min_normal_curvature=kn_min,
+        bridging_length=bridge,
+        winding_stress=ten[0] if ten else 0.0,
+        residual_prestress=ten[1] if ten else 0.0,
+        tension_loss=ten[2] if ten else 0.0,
         z_start=bl.z_start,
         z_end=bl.z_end,
         thickness_profile=S.Curve(x=bl.base.z.tolist(), y=bl.thickness.tolist()),

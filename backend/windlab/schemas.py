@@ -193,6 +193,11 @@ class LayerResult(BaseModel):
     slippage_b: float = Field(0.0, description="Slippage coefficient kg/kn used on dome B")
     dwell_slippage: float = Field(0.0, description="Slippage a dwell on the turnaround circle would need")
     friction: float = 0.0
+    min_normal_curvature: float = Field(0.0, description="Smallest fibre normal curvature on the path [1/mm]")
+    bridging_length: float = Field(0.0, description="Path length per pass with negative normal curvature [mm]")
+    winding_stress: float = Field(0.0, description="Ply stress from the winding tension [MPa]")
+    residual_prestress: float = Field(0.0, description="Ply prestress left after all layers are wound [MPa]")
+    tension_loss: float = Field(0.0, description="Fraction of the winding prestress lost")
     z_start: float
     z_end: float
     thickness_profile: Curve = Field(..., description="x = z [mm], y = thickness [mm]")
@@ -287,6 +292,7 @@ class PathResult(BaseModel):
     circuit_breaks: list[int] = Field(..., description="Indices where each circuit starts")
     alpha: list[float] = Field(default_factory=list, description="Winding angle at each point [deg]")
     slippage: list[float] = Field(default_factory=list, description="Slippage coefficient kg/kn at each point")
+    dwell: list[bool] = Field(default_factory=list, description="True on dwell arcs at the turnarounds")
 
 
 class MachineFrame(BaseModel):
@@ -335,6 +341,22 @@ class ThicknessMapResult(BaseModel):
     gap_fraction: float = Field(..., description="Cylinder area below 50% of nominal")
     overlap_fraction: float = Field(..., description="Cylinder area above 150% of nominal")
     warnings: list[str] = []
+
+
+class TensionScheduleRequest(BaseModel):
+    project: Project
+    target_tension: Optional[float] = Field(None, gt=0, description="Outermost layer tension [N]")
+    max_factor: float = Field(3.0, ge=1.0, le=10.0, description="Cap on inner layer stress vs target")
+
+
+class TensionScheduleResult(BaseModel):
+    layer_ids: list[str]
+    current_tension: list[float]
+    recommended_tension: list[float]
+    residual_current: list[float] = Field(..., description="Residual ply prestress with current tensions [MPa]")
+    residual_recommended: list[float]
+    liner_hoop_current: float
+    liner_hoop_recommended: float
 
 
 class GcodeRequest(BaseModel):

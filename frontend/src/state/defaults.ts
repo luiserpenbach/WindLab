@@ -1,4 +1,4 @@
-import type { Layer, LayerType, MachineAxis, MachineSpec, Project } from '../api/types';
+import type { Layer, LayerType, LinerSpec, MachineAxis, MachineSpec, Project } from '../api/types';
 import { SCHEMA_VERSION } from '../api/types';
 
 /** Mirrors the Pydantic defaults in backend/windlab/schemas.py. */
@@ -49,6 +49,8 @@ export function defaultProject(): Project {
       boss_radius_b: 20,
       boss_length: 30,
       shaft_radius: 12,
+      neck_thickness: null,
+      neck_blend_radius: null,
     },
     requirements: {
       meop: 30,
@@ -85,14 +87,43 @@ export function newLayer(type: LayerType, existing: { id: string }[]): Layer {
     tows: 1,
     band_width: 6,
     tension: 20,
+    winding: 'geodesic',
+    angle: null,
+    friction: 0.2,
     turnaround_offset: 0,
+    turnaround_offset_b: null,
     pattern: null,
     dwell_max: 90,
     passes: 2,
     end_offset_a: 0,
     end_offset_b: 0,
     thickness_override: null,
+    band_shape: 'rectangular',
   };
+}
+
+const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+function normalizeLiner(d: LinerSpec, raw: Partial<LinerSpec> | undefined): LinerSpec {
+  const l = { ...d, ...(raw ?? {}) };
+  l.neck_thickness = finite(l.neck_thickness) ? l.neck_thickness : null;
+  l.neck_blend_radius = finite(l.neck_blend_radius) ? l.neck_blend_radius : null;
+  return l;
+}
+
+/** Fill missing / invalid layer fields (older files predate non-geodesic winding). */
+export function normalizeLayer(raw: unknown, before: { id: string }[]): Layer {
+  const l = (raw ?? {}) as Partial<Layer>;
+  const type: LayerType = l.type === 'hoop' ? 'hoop' : 'helical';
+  const d = newLayer(type, before);
+  const out: Layer = { ...d, ...l, type };
+  out.winding = l.winding === 'non-geodesic' ? 'non-geodesic' : 'geodesic';
+  out.angle = finite(l.angle) ? l.angle : null;
+  out.friction = finite(l.friction) ? l.friction : d.friction;
+  out.turnaround_offset = finite(l.turnaround_offset) ? l.turnaround_offset : d.turnaround_offset;
+  out.turnaround_offset_b = finite(l.turnaround_offset_b) ? l.turnaround_offset_b : null;
+  out.band_shape = l.band_shape === 'lenticular' || l.band_shape === 'elliptical' ? l.band_shape : 'rectangular';
+  return out;
 }
 
 /**
@@ -105,10 +136,7 @@ export function normalizeProject(raw: unknown): Project {
   const m = (p.machine ?? {}) as Partial<MachineSpec>;
   const dm = d.machine;
   const layers = Array.isArray(p.layers)
-    ? p.layers.map((l, i, arr) => ({
-        ...newLayer((l?.type as LayerType) ?? 'helical', arr.slice(0, i) as Layer[]),
-        ...l,
-      }))
+    ? p.layers.map((l, i, arr) => normalizeLayer(l, arr.slice(0, i) as Layer[]))
     : [];
   return {
     ...d,
@@ -116,7 +144,7 @@ export function normalizeProject(raw: unknown): Project {
     schema_version: p.schema_version ?? SCHEMA_VERSION,
     name: typeof p.name === 'string' ? p.name : d.name,
     notes: typeof p.notes === 'string' ? p.notes : '',
-    liner: { ...d.liner, ...(p.liner ?? {}) },
+    liner: normalizeLiner(d.liner, p.liner),
     requirements: { ...d.requirements, ...(p.requirements ?? {}) },
     composite: { ...d.composite, ...(p.composite ?? {}) },
     layers,

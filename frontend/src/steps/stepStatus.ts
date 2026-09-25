@@ -5,7 +5,7 @@ import { worstStatus } from '../state/analysis';
 /**
  * Check ids are namespaced by the backend (core/design.py): `geo.*`,
  * `layer.<id>`, `layup.*`, `burst*`, `sr.*`, `af.*`, `liner.*`, `fatigue`,
- * `dome.*`. Known prefixes are routed explicitly; anything else falls back to
+ * `dome.*`, `fe.*` (shell FE). Known prefixes are routed explicitly; anything else falls back to
  * keyword matching, then to "analysis".
  */
 const PREFIX: [StepId, RegExp][] = [
@@ -13,7 +13,7 @@ const PREFIX: [StepId, RegExp][] = [
   ['layup', /^(layer|layup|dome|pattern)(\.|$)/],
   ['materials', /^(mat|material|composite)(\.|$)/],
   ['machine', /^(machine|mach|axis|kin)(\.|$)/],
-  ['analysis', /^(burst|sr|mass)(\.|$)/],
+  ['analysis', /^(burst|sr|mass|fe)(\.|$)/],
 ];
 const KEYWORDS: [StepId, RegExp][] = [
   ['machine', /machine|axis|axes|carriage|crossfeed|velocity|accel|soft.?limit/i],

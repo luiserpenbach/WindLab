@@ -492,6 +492,63 @@ main.center {
   background: #e34948;
 }
 
+/* path colour scale (Simulate: colour by angle / slippage) */
+.color-legend {
+  position: absolute;
+  bottom: 34px;
+  right: 10px;
+  width: 190px;
+  padding: 6px 9px 5px;
+  font-size: 11px;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+.cl-title {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.cl-bar {
+  position: relative;
+  height: 9px;
+  border-radius: 2px;
+}
+.cl-tick {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+}
+.cl-scale {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+.cl-mid {
+  position: absolute;
+  transform: translateX(-50%);
+}
+.cl-range {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.cl-range .sw {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  vertical-align: -1px;
+  margin-right: 3px;
+}
+
 /* ------------------------------------------------------------------ right panel */
 .panel {
   background: var(--surface);
@@ -636,6 +693,9 @@ textarea.notes:focus {
   border-color: var(--focus);
   outline: none;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 25%, transparent);
+}
+.numin.numin-short-unit input {
+  padding-right: 20px;
 }
 .numin-unit {
   position: absolute;
@@ -946,6 +1006,9 @@ textarea.notes {
 .banner.b-info,
 .banner.b-ok {
   background: var(--info-soft);
+}
+.banner-actions {
+  margin-top: 6px;
 }
 .banner-close {
   border: 0;
@@ -1269,10 +1332,10 @@ td.bad {
   cursor: grab;
 }
 .layer-table .c-idx {
-  width: 26px;
+  width: 30px;
 }
 .layer-table .c-ang {
-  width: 50px;
+  width: 54px;
 }
 .layer-table .c-t {
   width: 48px;
@@ -1330,6 +1393,92 @@ td.bad {
 .warn-mark {
   color: var(--status-warn);
   display: inline-flex;
+}
+.warn-mark.m-fail {
+  color: var(--status-fail);
+}
+.type-badge.t-ng {
+  background: color-mix(in srgb, var(--series-7) 18%, transparent);
+  color: color-mix(in srgb, var(--series-7) 85%, var(--text));
+}
+.result-card.rc-fail {
+  border-color: color-mix(in srgb, var(--status-fail) 55%, var(--border));
+}
+.result-card.rc-warn {
+  border-color: color-mix(in srgb, var(--status-warn) 55%, var(--border));
+}
+.slip-block {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.slip-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+.slip-label {
+  color: var(--text-2);
+}
+.slip-bar {
+  position: relative;
+  height: 7px;
+  border-radius: 3px;
+  background: var(--surface-3);
+}
+.slip-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 3px;
+  background: var(--status-ok);
+}
+.slip-row.s-warn .slip-fill {
+  background: var(--status-warn);
+}
+.slip-row.s-fail .slip-fill {
+  background: var(--status-fail);
+}
+.slip-limit {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+}
+.slip-val {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: right;
+}
+.slip-val strong {
+  display: inline-block;
+  min-width: 44px;
+  margin-left: 6px;
+  font-weight: 600;
+}
+.slip-row.s-warn .slip-val strong {
+  color: var(--status-warn);
+}
+.slip-row.s-fail .slip-val strong {
+  color: var(--status-fail);
+}
+.dwell-slip {
+  display: flex;
+  gap: 5px;
+  align-items: flex-start;
+  margin-top: 5px;
+  cursor: help;
+}
+.dwell-slip svg {
+  flex: none;
+  margin-top: 2px;
+}
+.layer-check {
+  margin-top: 6px;
 }
 .row-actions {
   text-align: right;

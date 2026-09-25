@@ -98,7 +98,8 @@ def post_path(req: S.LayerRequest):
         alpha = np.degrees(path.alpha[idx]) if path.alpha is not None else np.zeros(len(idx))
         lam = path.lam[idx] if path.lam is not None else np.zeros(len(idx))
         return S.PathResult(layer_id=req.layer_id, points=np.round(pts[idx], 3).tolist(), circuit_breaks=breaks,
-                            alpha=np.round(alpha, 3).tolist(), slippage=np.round(lam, 4).tolist())
+                            alpha=np.round(alpha, 3).tolist(), slippage=np.round(lam, 4).tolist(),
+                            dwell=(path.dwell[idx].tolist() if path.dwell is not None else [False] * len(idx)))
 
     return _design_errors(run)
 
@@ -127,6 +128,25 @@ def post_thickness_map(req: S.ThicknessMapRequest):
 
     return _design_errors(lambda: map_result(build(req.project), req.layer_id, req.cumulative,
                                              req.resolution, req.n_phi))
+
+
+@app.post("/api/tension-schedule", response_model=S.TensionScheduleResult)
+def post_tension_schedule(req: S.TensionScheduleRequest):
+    from .core import tension
+
+    def run():
+        b = build(req.project)
+        cur = tension.analyse(b)
+        rec_t = tension.schedule(b, req.target_tension, req.max_factor)
+        rec = tension.analyse(b, rec_t)
+        r = lambda a: np.round(np.asarray(a, dtype=float), 3).tolist()  # noqa: E731
+        return S.TensionScheduleResult(
+            layer_ids=cur.layer_ids, current_tension=r(cur.tension), recommended_tension=r(rec_t),
+            residual_current=r(cur.residual_stress), residual_recommended=r(rec.residual_stress),
+            liner_hoop_current=cur.liner_hoop, liner_hoop_recommended=rec.liner_hoop,
+        )
+
+    return _design_errors(run)
 
 
 @app.post("/api/gcode")

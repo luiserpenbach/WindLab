@@ -96,6 +96,7 @@ class PathPoints:
     circuit_starts: list[int]
     alpha: Optional[np.ndarray] = None  # winding angle [rad]
     lam: Optional[np.ndarray] = None  # slippage coefficient
+    dwell: Optional[np.ndarray] = None  # True on dwell arcs at the turnarounds
 
     def xyz(self) -> np.ndarray:
         # negative sine so the mandrel turns in the positive sense while winding
@@ -127,10 +128,11 @@ def helical_layer_path(
     alpha = getattr(p, "alpha", np.arcsin(np.clip(gp.r0 / np.maximum(p.r, 1e-9), 0, 1)))
     lam = getattr(p, "lam", np.zeros_like(p.z))
     slip = (getattr(gp, "dwell_slip_a", 0.0), getattr(gp, "dwell_slip_b", 0.0))
-    zs, rs, ps, als, lms, starts = [], [], [], [], [], []
+    zs, rs, ps, als, lms, dws, starts = [], [], [], [], [], [], []
 
-    def add(z, r, ph, al, lm):
+    def add(z, r, ph, al, lm, dw=False):
         zs.append(z), rs.append(r), ps.append(ph), als.append(al), lms.append(lm)
+        dws.append(np.full(len(z), dw))
 
     phi = 0.0
     for _ in range(n_circuits):
@@ -138,17 +140,17 @@ def helical_layer_path(
         add(p.z, p.r, phi + p.phi - p.phi[0], alpha, lam)  # A -> B
         phi += p.advance
         dz, dr, dp = _dwell_arc(p.z[-1], p.r[-1], phi, dwell, samples)
-        add(dz, dr, dp, np.full(len(dz), np.pi / 2), np.full(len(dz), slip[1]))
+        add(dz, dr, dp, np.full(len(dz), np.pi / 2), np.full(len(dz), slip[1]), True)
         phi += dwell
         # B -> A: the same path walked backwards, still advancing in phi
         add(p.z[::-1][1:], p.r[::-1][1:], phi + (p.phi[-1] - p.phi[::-1])[1:], alpha[::-1][1:], lam[::-1][1:])
         phi += p.advance
         dz, dr, dp = _dwell_arc(p.z[0], p.r[0], phi, dwell, samples)
-        add(dz, dr, dp, np.full(len(dz), np.pi / 2), np.full(len(dz), slip[0]))
+        add(dz, dr, dp, np.full(len(dz), np.pi / 2), np.full(len(dz), slip[0]), True)
         phi += dwell
     assert abs((2 * p.advance + 2 * dwell) - shift_per_circuit) < 1e-6 or shift_per_circuit == 0
     return PathPoints(np.concatenate(zs), np.concatenate(rs), np.concatenate(ps), starts,
-                      np.concatenate(als), np.concatenate(lms))
+                      np.concatenate(als), np.concatenate(lms), np.concatenate(dws))
 
 
 def hoop_layer_path(

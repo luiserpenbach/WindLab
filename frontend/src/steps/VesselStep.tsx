@@ -1,6 +1,7 @@
 import type { DomeType, LinerSpec, Requirements } from '../api/types';
 import { NumberField, Section, SelectField, Segmented, Switch, Field, NumberInput } from '../components/fields';
 import { LineChart, type Series } from '../components/LineChart';
+import { Banner, Button } from '../components/ui';
 import { useAnalysis, useCatalog } from '../state/analysis';
 import { patchSection, useProject } from '../state/projectStore';
 import { layerColors } from '../viewer/colors';
@@ -19,6 +20,19 @@ export function VesselPanel() {
   const linerMat = materials?.liners.find((m) => m.id === l.material);
   const st = result?.structural;
   const bar = (mpa: number) => `${sig(mpa * 10, 4)} bar`;
+  // Mirrors the backend's auto values (core/geometry.py) for display.
+  const autoNeckT = 3 * l.wall_thickness;
+  const autoBlend = (rb: number) => Math.min(Math.max(1.8 * rb, rb + 15), 0.6 * l.radius);
+  const autoBlendA = autoBlend(l.boss_radius_a);
+  const autoBlendB = autoBlend(l.boss_radius_b);
+  const geodesicHelicals = project.layers.filter((x) => x.type === 'helical' && x.winding !== 'non-geodesic');
+  const unequalBosses = l.boss_radius_a !== l.boss_radius_b;
+  // One update = one undo step for all layers.
+  const switchToNonGeodesic = () =>
+    update((p) => ({
+      ...p,
+      layers: p.layers.map((x) => (x.type === 'helical' ? { ...x, winding: 'non-geodesic' as const } : x)),
+    }));
 
   return (
     <>
@@ -100,6 +114,22 @@ export function VesselPanel() {
           hint="Polar boss, end B (z > 0)"
           onCommit={(v) => setL({ boss_radius_b: v }, 'bossB')}
         />
+        {unequalBosses && geodesicHelicals.length ? (
+          <Banner kind="info">
+            <strong>Unequal polar openings.</strong> Geodesic helicals turn at the larger boss radius on both ends.
+            Non-geodesic winding uses friction to turn close to each boss.{' '}
+            <span className="muted">
+              {geodesicHelicals.length === 1
+                ? `Layer ${geodesicHelicals[0].id} is geodesic.`
+                : `${geodesicHelicals.length} helical layers are geodesic.`}
+            </span>
+            <div className="banner-actions">
+              <Button size="sm" onClick={switchToNonGeodesic} title="One undo step (Ctrl+Z)">
+                Switch helicals to non-geodesic
+              </Button>
+            </div>
+          </Banner>
+        ) : null}
         <NumberField
           label="Boss length"
           unit="mm"
@@ -109,6 +139,59 @@ export function VesselPanel() {
           hint="Protrusion beyond the dome"
           onCommit={(v) => setL({ boss_length: v }, 'bossL')}
         />
+        <Field
+          label="Neck thickness"
+          hint={
+            l.neck_thickness == null
+              ? `Auto: 3 × wall = ${sig(autoNeckT, 3)} mm · liner wall at the boss`
+              : 'Liner wall thickness at the boss'
+          }
+        >
+          <div className="inline">
+            <Switch
+              checked={l.neck_thickness == null}
+              label="Auto"
+              onChange={(auto) => setL({ neck_thickness: auto ? null : Number(sig(autoNeckT, 3)) }, 'neckTAuto')}
+            />
+            <NumberInput
+              ariaLabel="Neck thickness"
+              value={l.neck_thickness ?? autoNeckT}
+              disabled={l.neck_thickness == null}
+              unit="mm"
+              gt={0}
+              step={0.1}
+              onCommit={(v) => setL({ neck_thickness: v }, 'neckT')}
+            />
+          </div>
+        </Field>
+        <Field
+          label="Neck blend radius"
+          hint={
+            l.neck_blend_radius == null
+              ? `Auto: A ${sig(autoBlendA, 3)} mm · B ${sig(autoBlendB, 3)} mm · wall thickens inside this radius`
+              : 'Radius where the wall starts thickening towards the boss (both ends; no effect at a boss at or above it)'
+          }
+        >
+          <div className="inline">
+            <Switch
+              checked={l.neck_blend_radius == null}
+              label="Auto"
+              onChange={(auto) =>
+                setL({ neck_blend_radius: auto ? null : Number(sig(Math.max(autoBlendA, autoBlendB), 3)) }, 'neckRAuto')
+              }
+            />
+            <NumberInput
+              ariaLabel="Neck blend radius"
+              value={l.neck_blend_radius}
+              placeholder="auto"
+              disabled={l.neck_blend_radius == null}
+              unit="mm"
+              gt={0}
+              step={1}
+              onCommit={(v) => setL({ neck_blend_radius: v }, 'neckR')}
+            />
+          </div>
+        </Field>
         <NumberField
           label="Shaft radius"
           unit="mm"

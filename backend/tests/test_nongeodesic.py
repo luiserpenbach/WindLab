@@ -81,6 +81,9 @@ def test_slippage_check_and_simulation():
 
 
 def test_unreachable_turnaround_is_reported():
-    p = S.Project(layers=[S.Layer(id="h", type="helical", winding="non-geodesic", angle=70.0)])
-    with pytest.raises(Exception, match="(turn|reachable)"):
-        analyze(p)
+    p = S.Project(layers=[S.Layer(id="h", type="helical", winding="non-geodesic", angle=70.0),
+                          S.Layer(id="c", type="hoop")])
+    res = analyze(p)  # the analysis survives: the layer falls back to a geodesic path and is flagged
+    chk = next(c for c in res.checks if c.id == "layer.h.path")
+    assert chk.status == "fail" and "reachable" in chk.detail
+    assert res.structural is not None

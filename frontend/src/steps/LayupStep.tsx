@@ -1,23 +1,48 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, errorMessage } from '../api/client';
-import type { Layer, LayerResult, LayerType, PatternCandidate, SuggestLayupResponse } from '../api/types';
-import { Field, NumberField, NumberInput, Section, Segmented, Switch, TextInput } from '../components/fields';
+import type {
+  BandShape,
+  Check,
+  Layer,
+  LayerResult,
+  LayerType,
+  PatternCandidate,
+  SuggestLayupResponse,
+  WindingType,
+} from '../api/types';
+import {
+  Field,
+  NumberField,
+  NumberInput,
+  Section,
+  Segmented,
+  SelectField,
+  Switch,
+  TextInput,
+} from '../components/fields';
 import { Icon } from '../components/Icon';
 import { LineChart, type Series } from '../components/LineChart';
-import { Banner, Button, Empty, Modal, Spinner, WarningList } from '../components/ui';
+import { Banner, Button, Empty, Modal, Spinner, StatusIcon, WarningList } from '../components/ui';
 import { useAnalysis } from '../state/analysis';
 import { newLayer, newLayerId, normalizeProject } from '../state/defaults';
 import { useProject } from '../state/projectStore';
 import { useUi } from '../state/uiStore';
 import { layerColors } from '../viewer/colors';
+import { UTIL_FAIL, UTIL_MAX, utilisation, utilStatus } from '../viewer/colormaps';
 import { fmtDuration, fmtMass, sig } from '../util/format';
-import { ChecksList } from './shared';
+import { ChecksList, worstCheck } from './shared';
 import { checksForStep } from './stepStatus';
 import { MeridianChart } from './VesselStep';
 
 function useLayerResults(): Map<string, LayerResult> {
   const { result } = useAnalysis();
   return useMemo(() => new Map((result?.layers ?? []).map((l) => [l.id, l])), [result]);
+}
+
+/** Checks that belong to one layer's own sub-checks (`layer.<id>.*`, e.g. slippage). */
+export function layerSubChecks(checks: Check[] | undefined, id: string): Check[] {
+  const pre = `layer.${id}.`;
+  return (checks ?? []).filter((c) => c.id.startsWith(pre));
 }
 
 /** Ensure a layer is selected when layers exist. */
@@ -154,6 +179,8 @@ export function LayupPanel() {
             {layers.map((l, i) => {
               const r = results.get(l.id);
               const active = sel?.id === l.id;
+              const ng = l.type === 'helical' && l.winding === 'non-geodesic';
+              const sub = worstCheck(layerSubChecks(result?.checks, l.id));
               return (
                 <tr
                   key={l.id}
@@ -203,6 +230,22 @@ export function LayupPanel() {
                       <span className={`type-badge t-${l.type}`} title={l.type}>
                         {l.type === 'hoop' ? 'H' : 'X'}
                       </span>
+                      {ng ? (
+                        <span
+                          className="type-badge t-ng"
+                          title={`Non-geodesic, cylinder angle ${l.angle == null ? 'auto (balanced)' : `${sig(l.angle, 3)}°`}, μ ${sig(l.friction, 3)}`}
+                        >
+                          NG
+                        </span>
+                      ) : null}
+                      {sub && (sub.status === 'fail' || sub.status === 'warn') ? (
+                        <span
+                          className={`warn-mark m-${sub.status}`}
+                          title={`${sub.label}: ${sig(sub.value ?? 0, 3)} / ${sig(sub.limit ?? 0, 3)}`}
+                        >
+                          <Icon name={sub.status === 'fail' ? 'x' : 'alert'} size={12} />
+                        </span>
+                      ) : null}
                       {r?.warnings.length ? (
                         <span className="warn-mark" title={r.warnings.join('\n')}>
                           <Icon name="alert" size={12} />
@@ -210,7 +253,18 @@ export function LayupPanel() {
                       ) : null}
                     </button>
                   </td>
-                  <td className="num">{r ? `${sig(r.angle, 3)}°` : '–'}</td>
+                  <td
+                    className="num"
+                    title={
+                      ng
+                        ? l.angle == null
+                          ? 'Cylinder angle: auto (balanced slippage)'
+                          : 'Cylinder angle: set'
+                        : undefined
+                    }
+                  >
+                    {r ? `${sig(r.angle, 3)}°` : ng && l.angle != null ? `${sig(l.angle, 3)}°` : '–'}
+                  </td>
                   <td className="num">{r ? sig(r.thickness, 3) : '–'}</td>
                   <td className="num">{r ? r.circuits : '–'}</td>
                   <td className="row-actions">
@@ -259,6 +313,7 @@ export function LayupPanel() {
           key={sel.id}
           layer={sel}
           result={results.get(sel.id) ?? null}
+          checks={layerSubChecks(result?.checks, sel.id)}
           allIds={layers.map((l) => l.id)}
           onChange={(patch, key) =>
             setLayers((ls) => ls.map((l) => (l.id === sel.id ? { ...l, ...patch } : l)), `layer.${sel.id}.${key}`)
@@ -315,6 +370,7 @@ export function LayupPanel() {
                   <span className={`type-badge t-${l.type}`}>{l.type}</span> <strong>{l.id}</strong>{' '}
                   <span className="muted">
                     {l.tows} tow · {l.band_width} mm band
+                    {l.type === 'helical' && l.winding === 'non-geodesic' ? ' · non-geodesic' : ''}
                     {l.type === 'hoop'
                       ? ` · ${l.passes} passes`
                       : l.turnaround_offset
@@ -341,6 +397,7 @@ export function LayupPanel() {
 function LayerEditor({
   layer: l,
   result: r,
+  checks,
   allIds,
   onChange,
   onRename,
@@ -349,6 +406,7 @@ function LayerEditor({
 }: {
   layer: Layer;
   result: LayerResult | null;
+  checks: Check[];
   allIds: string[];
   onChange: (patch: Partial<Layer>, key: string) => void;
   onRename: (id: string) => void;
@@ -431,17 +489,20 @@ function LayerEditor({
           hint="Total band tension"
           onCommit={(v) => onChange({ tension: v }, 'tension')}
         />
+        <SelectField<BandShape>
+          label="Band cross-section"
+          value={l.band_shape}
+          options={[
+            { value: 'rectangular', label: 'Rectangular' },
+            { value: 'lenticular', label: 'Lenticular' },
+            { value: 'elliptical', label: 'Elliptical' },
+          ]}
+          hint="Band profile used by the band-level thickness simulation"
+          onChange={(v) => onChange({ band_shape: v }, 'bandShape')}
+        />
         {l.type === 'helical' ? (
           <>
-            <NumberField
-              label="Turnaround offset"
-              unit="mm"
-              value={l.turnaround_offset}
-              min={0}
-              step={1}
-              hint="Extra turnaround radius beyond boss + band/2 (dome stagger)"
-              onCommit={(v) => onChange({ turnaround_offset: v }, 'tao')}
-            />
+            <HelicalPathFields layer={l} result={r} onChange={onChange} />
             <NumberField
               label="Max dwell"
               unit="°"
@@ -511,7 +572,7 @@ function LayerEditor({
         </Field>
       </Section>
 
-      {r ? <LayerResultCard r={r} /> : null}
+      {r ? <LayerResultCard r={r} checks={checks} /> : null}
 
       {l.type === 'helical' ? (
         <Section title="Winding pattern">
@@ -522,13 +583,168 @@ function LayerEditor({
   );
 }
 
-function LayerResultCard({ r }: { r: LayerResult }) {
+function HelicalPathFields({
+  layer: l,
+  result: r,
+  onChange,
+}: {
+  layer: Layer;
+  result: LayerResult | null;
+  onChange: (patch: Partial<Layer>, key: string) => void;
+}) {
+  const ng = l.winding === 'non-geodesic';
+  const sameB = l.turnaround_offset_b == null;
+  return (
+    <>
+      <Field
+        label="Path"
+        hint={
+          ng
+            ? 'Friction steers the fibre on the domes, so each end can turn at its own radius'
+            : 'Shortest path on the surface; needs no friction'
+        }
+      >
+        <Segmented<WindingType>
+          ariaLabel="Path type"
+          value={l.winding}
+          options={[
+            { value: 'geodesic', label: 'Geodesic' },
+            { value: 'non-geodesic', label: 'Non-geodesic' },
+          ]}
+          onChange={(v) => onChange({ winding: v }, 'winding')}
+        />
+      </Field>
+      {ng ? (
+        <>
+          <Field
+            label="Cylinder angle"
+            hint={
+              l.angle == null
+                ? r && r.winding === 'non-geodesic'
+                  ? `Auto → ${sig(r.angle, 3)}°, balances slippage on both domes`
+                  : 'Auto: the angle that balances slippage on both domes'
+                : 'Winding angle on the cylinder (0 – 85°)'
+            }
+          >
+            <div className="inline">
+              <Switch
+                checked={l.angle == null}
+                label="Auto (balanced)"
+                onChange={(auto) =>
+                  onChange(
+                    { angle: auto ? null : Math.min(84, Math.max(1, Number(sig(r?.angle ?? 30, 3)) || 30)) },
+                    'angleAuto',
+                  )
+                }
+              />
+              <NumberInput
+                ariaLabel="Cylinder angle"
+                value={l.angle ?? r?.angle ?? null}
+                precision={4}
+                className="numin-short-unit"
+                disabled={l.angle == null}
+                unit="°"
+                gt={0}
+                lt={85}
+                step={1}
+                onCommit={(v) => onChange({ angle: v }, 'angle')}
+              />
+            </div>
+          </Field>
+          <NumberField
+            label="Friction μ"
+            unit="μ"
+            value={l.friction}
+            min={0}
+            max={1}
+            step={0.01}
+            hint="Available fibre/surface friction: the largest |kg/kn| the band holds without sliding"
+            onCommit={(v) => onChange({ friction: v }, 'mu')}
+          />
+        </>
+      ) : null}
+      <NumberField
+        label="Turnaround A"
+        unit="mm"
+        value={l.turnaround_offset}
+        min={0}
+        step={1}
+        hint={`Turnaround offset: extra radius beyond boss + band/2 at end A${sameB ? ' (and B)' : ''}`}
+        onCommit={(v) => onChange({ turnaround_offset: v }, 'tao')}
+      />
+      <Field
+        label="Turnaround B"
+        hint={ng ? 'Turnaround offset at end B' : 'Geodesic paths use the larger turnaround radius at both ends'}
+      >
+        <div className="inline">
+          <Switch
+            checked={sameB}
+            label="Same as A"
+            onChange={(same) => onChange({ turnaround_offset_b: same ? null : l.turnaround_offset }, 'taoBSame')}
+          />
+          <NumberInput
+            ariaLabel="Turnaround offset B"
+            value={l.turnaround_offset_b ?? l.turnaround_offset}
+            disabled={sameB}
+            unit="mm"
+            min={0}
+            step={1}
+            onCommit={(v) => onChange({ turnaround_offset_b: v }, 'taoB')}
+          />
+        </div>
+      </Field>
+    </>
+  );
+}
+
+/** |lambda|/mu utilisation bar: green < 0.8, amber < 1, red >= 1. */
+function SlipBar({ label, lambda, mu }: { label: string; lambda: number; mu: number }) {
+  const u = utilisation(lambda, mu);
+  const st = utilStatus(u);
+  const pct = Math.min(100, (u / UTIL_MAX) * 100);
+  const lim = (UTIL_FAIL / UTIL_MAX) * 100;
+  const pctText = Number.isFinite(u) ? `${Math.round(u * 100)} %` : '∞';
+  return (
+    <div
+      className={`slip-row s-${st}`}
+      title={`Slippage kg/kn ${sig(lambda, 3)} on dome ${label}; available friction μ ${sig(mu, 3)} → ${pctText} utilised`}
+    >
+      <span className="slip-label">Slippage {label}</span>
+      <div
+        className="slip-bar"
+        role="meter"
+        aria-label={`Slippage utilisation dome ${label}`}
+        aria-valuemin={0}
+        aria-valuemax={UTIL_MAX}
+        aria-valuenow={Number.isFinite(u) ? Number(u.toFixed(3)) : UTIL_MAX}
+      >
+        <div className="slip-fill" style={{ width: `${pct}%` }} />
+        <i className="slip-limit" style={{ left: `${lim}%` }} />
+      </div>
+      <span className="slip-val">
+        {sig(lambda, 3)}
+        <span className="muted"> / {sig(mu, 3)}</span>
+        <strong>{pctText}</strong>
+      </span>
+    </div>
+  );
+}
+
+function LayerResultCard({ r, checks }: { r: LayerResult; checks: Check[] }) {
+  const helical = r.type === 'helical';
+  const ng = helical && r.winding === 'non-geodesic';
+  const ta = r.turnaround_a ?? r.turnaround_radius;
+  const tb = r.turnaround_b ?? r.turnaround_radius;
   const rows: [string, string][] = [
-    ['Winding angle', `${sig(r.angle, 4)}°`],
+    [helical ? 'Cylinder angle' : 'Winding angle', `${sig(r.angle, 4)}°`],
+    ...(helical ? ([['Path', ng ? 'Non-geodesic' : 'Geodesic']] as [string, string][]) : []),
     ['Cured thickness', `${sig(r.thickness, 3)} mm`],
     ['Band thickness', `${sig(r.band_thickness, 3)} mm`],
-    ...(r.turnaround_radius != null
-      ? ([['Turnaround radius', `${sig(r.turnaround_radius, 4)} mm`]] as [string, string][])
+    ...(helical && ta != null && tb != null
+      ? ([
+          ['Turnaround radius A', `${sig(ta, 4)} mm`],
+          ['Turnaround radius B', `${sig(tb, 4)} mm`],
+        ] as [string, string][])
       : []),
     ['Extent z', `${sig(r.z_start, 4)} … ${sig(r.z_end, 4)} mm`],
     ['Circuits', String(r.circuits)],
@@ -536,8 +752,9 @@ function LayerResultCard({ r }: { r: LayerResult }) {
     ['Fibre / resin', `${fmtMass(r.fiber_mass)} / ${fmtMass(r.resin_mass)}`],
     ['Wind time', fmtDuration(r.wind_time)],
   ];
+  const worst = worstCheck(checks);
   return (
-    <div className="card result-card">
+    <div className={`card result-card ${worst ? `rc-${worst.status}` : ''}`}>
       <div className="card-title">Computed</div>
       <dl className="props two">
         {rows.map(([k, v]) => (
@@ -547,6 +764,40 @@ function LayerResultCard({ r }: { r: LayerResult }) {
           </div>
         ))}
       </dl>
+      {ng ? (
+        <div className="slip-block">
+          <SlipBar label="A" lambda={r.slippage_a} mu={r.friction} />
+          <SlipBar label="B" lambda={r.slippage_b} mu={r.friction} />
+        </div>
+      ) : null}
+      {helical ? (
+        <div
+          className="dwell-slip muted small"
+          title={
+            'Slippage |kg/kn| a dwell (mandrel rotation with the eye parked) on the turnaround circle would need. ' +
+            'It is usually large on steep dome shoulders; in practice the dwell happens on the boss neck, so this ' +
+            'is for information only and is not checked.'
+          }
+        >
+          <Icon name="info" size={12} />
+          <span>Dwell slippage {sig(r.dwell_slippage, 3)} on the turnaround circle · informational</span>
+        </div>
+      ) : null}
+      {checks.map((c) => (
+        <div key={c.id} className={`check c-${c.status} layer-check`} title={c.detail || undefined}>
+          <StatusIcon status={c.status} />
+          <div className="check-main">
+            <div className="check-label">{c.label}</div>
+            {c.detail ? <div className="check-detail">{c.detail}</div> : null}
+          </div>
+          {c.value != null ? (
+            <div className="check-val">
+              {sig(c.value, 3)}
+              {c.limit != null ? <span className="check-lim"> / {sig(c.limit, 3)}</span> : null}
+            </div>
+          ) : null}
+        </div>
+      ))}
       <WarningList items={r.warnings} />
     </div>
   );

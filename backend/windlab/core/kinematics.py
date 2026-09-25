@@ -54,14 +54,32 @@ def layer_path(b: Build, bl: BuiltLayer) -> PathPoints:
     return hoop_layer_path(bl.base, bl.z_start, bl.z_end, bl.spec.band_width, bl.spec.passes)
 
 
-def solid_radius(b: Build, bl: BuiltLayer) -> tuple[np.ndarray, np.ndarray]:
-    """Outer radius of mandrel + liner + wound layers (incl. this one) + bosses/shaft vs x."""
+def profile_envelope(prof, xs: np.ndarray) -> np.ndarray:
+    """Max radius of a (possibly folded) meridian polyline in each x bin (bins centred on xs)."""
+    s = prof.s
+    n = max(int(s[-1] / 0.25), 2)
+    sq = np.linspace(0.0, s[-1], n)
+    zq, rq = np.interp(sq, s, prof.z), np.interp(sq, s, prof.r)
+    h = xs[1] - xs[0]
+    idx = np.round((zq - xs[0]) / h).astype(int)
+    ok = (idx >= 0) & (idx < len(xs))
+    g = np.zeros(len(xs))
+    np.maximum.at(g, idx[ok], rq[ok])
+    # fill empty bins inside the profile span by interpolation
+    inside = (xs >= prof.z.min()) & (xs <= prof.z.max())
+    empty = inside & (g == 0)
+    if empty.any():
+        g[empty] = np.interp(xs[empty], xs[~empty & inside], g[~empty & inside])
+    return g
+
+
+def solid_radius(b: Build, bl: BuiltLayer, which: str = "top") -> tuple[np.ndarray, np.ndarray]:
+    """Outer radius of liner + wound layers (incl. this one for 'top') + bosses/shaft vs x."""
     lin = b.project.liner
-    top = bl.top
-    z0, z1 = float(top.z[0]), float(top.z[-1])
+    top = bl.top if which == "top" else bl.base
+    z0, z1 = float(top.z.min()), float(top.z.max())
     xs = np.arange(math.floor(z0) - lin.boss_length - 800, math.ceil(z1) + lin.boss_length + 800, 1.0)
-    order = np.argsort(top.z)
-    g = np.interp(xs, top.z[order], top.r[order], left=0.0, right=0.0)
+    g = profile_envelope(top, xs)
     g = np.where((xs < z0) & (xs >= z0 - lin.boss_length), lin.boss_radius_a, g)
     g = np.where((xs > z1) & (xs <= z1 + lin.boss_length), lin.boss_radius_b, g)
     g = np.where((xs < z0 - lin.boss_length) | (xs > z1 + lin.boss_length), lin.shaft_radius, g)
@@ -180,7 +198,28 @@ def simulate_layer(b: Build, bl: BuiltLayer) -> Motion:
         warnings.append(f"Free fibre up to {free.max():.0f} mm (low winding angle); expect band narrowing")
 
     warnings += check_limits(m, x_eye, y_eye, np.degrees(theta), np.degrees(beta))
+    clear, z_hit = free_fibre_clearance(b, bl, P, T, lam)
+    if clear < -2.0:
+        warnings.append(f"Free fibre cuts {-clear:.1f} mm into earlier build-up/boss near z = {z_hit:.0f} mm: it will "
+                        "rub or bridge there; review turnaround offsets and the boss shoulder")
     return Motion(bl, t, x_eye, y_eye, np.degrees(theta), np.degrees(beta), P, free, path.circuit_starts, warnings)
+
+
+def free_fibre_clearance(b: Build, bl: BuiltLayer, P: np.ndarray, T: np.ndarray, lam: np.ndarray,
+                         skip: float = 5.0, samples: int = 16) -> tuple[float, float]:
+    """Minimum radial clearance of the free fibre (contact -> eye) to the solid (wound part below this
+    layer, bosses, shaft). Returns (min clearance [mm], axial position of the minimum)."""
+    xs, gs = solid_radius(b, bl, "base")
+    u = np.linspace(0.0, 1.0, samples + 1)[1:]
+    L = np.maximum(lam - skip, 0.0)
+    pts = P[:, None, :] + (skip + L[:, None] * u[None, :])[:, :, None] * T[:, None, :]
+    x = pts[:, :, 0]
+    rho = np.hypot(pts[:, :, 1], pts[:, :, 2])
+    g = np.interp(x, xs, gs)
+    c = rho - g
+    c = np.where(lam[:, None] > skip, c, np.inf)
+    k = int(np.argmin(c))
+    return float(c.flat[k]), float(x.flat[k])
 
 
 def to_machine(ax: S.MachineAxis, v: np.ndarray, offset: float = 0.0) -> np.ndarray:

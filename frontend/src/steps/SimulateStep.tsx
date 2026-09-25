@@ -8,6 +8,7 @@ import { frameIndexAt, playback, usePlayback } from '../state/playback';
 import { useProject } from '../state/projectStore';
 import { useUi } from '../state/uiStore';
 import { layerColors } from '../viewer/colors';
+import type { PathColorMode } from '../viewer/colormaps';
 import { fmtDuration, fmtTime, sig } from '../util/format';
 import { useSelectedLayer } from './LayupStep';
 
@@ -19,7 +20,7 @@ let lastRunProject: Project | null = null;
 export function SimulatePanel() {
   const { project } = useProject();
   const ui = useUi();
-  const { path, sim, setPath, setSim } = ui;
+  const { path, sim, setPath, setSim, pathColor, setPathColor } = ui;
   const [sel, setSel] = useSelectedLayer();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +52,8 @@ export function SimulatePanel() {
 
   // Auto-run when the selected layer changes and nothing matching is loaded.
   useEffect(() => {
-    if (sel && (!sim || sim.layer_id !== sel.id) && !busy) void run(sel.id);
+    // run() aborts a request still in flight, so a layer picked mid-run is not lost.
+    if (sel && (!sim || sim.layer_id !== sel.id)) void run(sel.id);
   }, [sel?.id]);
 
   useEffect(() => () => ctrl.current?.abort(), []);
@@ -91,6 +93,19 @@ export function SimulatePanel() {
           ) : null}
         </div>
         {error ? <Banner kind="fail">{error}</Banner> : null}
+        <Field label="Colour by" hint={colourHint(pathColor, sel?.type === 'hoop', sel?.winding, sel?.friction)}>
+          <Segmented<PathColorMode>
+            size="sm"
+            ariaLabel="Colour path by"
+            value={pathColor}
+            options={[
+              { value: 'layer', label: 'Layer' },
+              { value: 'alpha', label: 'Angle α' },
+              { value: 'slip', label: 'Slippage' },
+            ]}
+            onChange={setPathColor}
+          />
+        </Field>
       </Section>
 
       {sim ? (
@@ -116,6 +131,13 @@ export function SimulatePanel() {
       ) : null}
     </>
   );
+}
+
+function colourHint(mode: PathColorMode, hoop: boolean, winding?: string, mu?: number): string {
+  if (mode === 'layer') return 'Fibre path in the layer colour';
+  if (mode === 'alpha') return 'Local winding angle to the meridian (viridis scale)';
+  if (hoop || winding !== 'non-geodesic') return 'Slippage utilisation |kg/kn| / μ — geodesic paths need none';
+  return `Slippage utilisation |kg/kn| / μ (μ = ${sig(mu ?? 0, 3)}); ≥ 1 means the fibre slides`;
 }
 
 function PlaybackControls({ sim }: { sim: SimulationResult }) {
