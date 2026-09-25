@@ -47,6 +47,9 @@ class Resin:
     cte: float = 60e-6
     cure: str = ""  # typical cure schedule (datasheet), for the traveller
     cure_temperature: float = 120.0  # typical stress-free (final cure) temperature [degC]
+    Yt: float = 55.0  # UD ply transverse tensile strength [MPa] (matrix dominated)
+    Yc: float = 200.0  # UD ply transverse compressive strength [MPa]
+    S12: float = 75.0  # UD ply in-plane shear strength [MPa]
 
     @property
     def G(self) -> float:
@@ -139,6 +142,9 @@ class Ply:
     fiber_strength: float  # delivered fibre stress at failure (with translation efficiency)
     alpha1: float = 0.0  # ply CTE, fibre direction [1/K]
     alpha2: float = 0.0  # ply CTE, transverse [1/K]
+    Yt: float = 55.0
+    Yc: float = 200.0
+    S12: float = 75.0
 
     @property
     def nu21(self) -> float:
@@ -177,6 +183,9 @@ def ply_properties(fiber: Fiber, resin: Resin, Vf: float, efficiency: float) -> 
         fiber_strength=efficiency * fiber.strength,
         alpha1=alpha1,
         alpha2=alpha2,
+        Yt=resin.Yt,
+        Yc=resin.Yc,
+        S12=resin.S12,
     )
 
 
@@ -206,7 +215,7 @@ def get_fiber(fid: str, lib=None) -> Fiber:
 def get_resin(rid: str, lib=None) -> Resin:
     for r in getattr(lib, "resins", None) or []:
         if r.id == rid:
-            return Resin(r.id, r.name, r.E, r.nu, r.density, r.cte, r.cure, r.cure_temperature)
+            return Resin(r.id, r.name, r.E, r.nu, r.density, r.cte, r.cure, r.cure_temperature, r.Yt, r.Yc, r.S12)
     if rid not in RESINS:
         raise KeyError(f"Unknown resin '{rid}'")
     return RESINS[rid]

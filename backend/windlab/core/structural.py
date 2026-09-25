@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.optimize import brentq
 
+from .failure import IFF_RESIDUAL, ply_material_state, puck_iff
 from .materials import LinerMaterial, Ply
 
 _P = np.array([[2.0, -1.0], [-1.0, 2.0]]) / 3.0
@@ -100,8 +101,13 @@ class PlyGroup:
     R: float  # mid radius
     ply: Ply
 
+    cracked: bool = False  # inter-fibre failure (Puck): transverse / shear stiffness degraded
+
     def qbar(self) -> np.ndarray:
         Q11, Q12, Q22, Q66 = self.ply.Q()
+        if self.cracked:
+            d = IFF_RESIDUAL
+            Q12, Q22, Q66 = Q12 * np.sqrt(d), Q22 * d, Q66 * d
         c, s = np.cos(self.angle), np.sin(self.angle)
         q11 = Q11 * c**4 + 2 * (Q12 + 2 * Q66) * s**2 * c**2 + Q22 * s**4
         q12 = (Q11 + Q22 - 4 * Q66) * s**2 * c**2 + Q12 * (s**4 + c**4)
@@ -133,21 +139,54 @@ class Vessel:
         self.liner = liner
         self.groups = groups
         self.Ri = R_inner
+        self.w_l = liner.R / R_inner
+        self._assemble()
+        self.dT = 0.0  # current temperature minus stress-free temperature
+        self._initial_cracked = [False] * len(groups)
+        self.damage = True  # False: linear-elastic composite (no Puck matrix cracking), e.g. to compare with FE
+
+    def _assemble(self) -> None:
         K = np.zeros((2, 2))
-        for g in groups:
+        Ka = np.zeros(2)  # thermal force per unit temperature change: sum w t Qbar alpha
+        for g in self.groups:
             q = g.qbar() * g.t
-            w = g.R / R_inner
+            w = g.R / self.Ri
             K[0] += w * q[0]
             K[1] += q[1]
-        self.K = K
-        self.w_l = liner.R / R_inner
-        # thermal force per unit temperature change: sum w t Qbar alpha
-        Ka = np.zeros(2)
-        for g in groups:
             fa = g.qbar() @ g.alpha() * g.t
-            Ka += np.array([g.R / R_inner * fa[0], fa[1]])
-        self.Ka = Ka
-        self.dT = 0.0  # current temperature minus stress-free temperature
+            Ka += np.array([w * fa[0], fa[1]])
+        self.K, self.Ka = K, Ka
+
+    def update_cracking(self, st: "State", dT: float | None = None) -> bool:
+        """Puck inter-fibre failure check of every ply group at ``st``; degrades and returns True on new cracks."""
+        dT = self.dT if dT is None else dT
+        changed = False
+        if not self.damage:
+            return False
+        for g in self.groups:
+            if g.cracked:
+                continue
+            _, s2, t12 = ply_material_state(st.eps[0], st.eps[1], g.angle, g.ply.Q(), g.ply.alpha1,
+                                            g.ply.alpha2, dT)
+            if puck_iff(s2, t12, g.ply.Yt, g.ply.Yc, g.ply.S12) >= 1.0:
+                g.cracked = changed = True
+        if changed:
+            self._assemble()
+        return changed
+
+    def reset_damage(self, cracked: list[bool] | None = None) -> None:
+        for g, c in zip(self.groups, cracked or self._initial_cracked):
+            g.cracked = c
+        self._assemble()
+
+    def solve_damaged(self, p: float, prev: "State", eps0: np.ndarray, dT: float | None = None) -> "State":
+        """Solve at p from the liner state ``prev`` and re-solve while new matrix cracks appear."""
+        cur = self.solve(p, prev.liner, eps0, dT)
+        for _ in range(len(self.groups) + 1):
+            if not self.update_cracking(cur, dT):
+                break
+            cur = self.solve(p, prev.liner, cur.eps, dT)
+        return cur
 
     def _liner_force(self, sig: np.ndarray) -> np.ndarray:
         return self.liner.t * np.array([self.w_l * sig[0], sig[1]])
@@ -177,18 +216,20 @@ class Vessel:
         out = []
         cur = st
         for p in np.linspace(st.p, p_to, steps + 1)[1:]:
-            cur = self.solve(float(p), cur.liner, cur.eps)
+            cur = self.solve_damaged(float(p), cur, cur.eps)
             out.append(cur)
         return out
 
     def cool(self, dT: float, steps: int = 6) -> list[State]:
         """Cure cool-down at zero pressure from the stress-free state to ``dT``; sets the vessel temperature."""
         out, cur = [], self.virgin()
+        self.reset_damage([False] * len(self.groups))
         for d in np.linspace(0.0, dT, steps + 1)[1:]:
-            cur = self.solve(0.0, cur.liner, cur.eps, float(d))
+            cur = self.solve_damaged(0.0, cur, cur.eps, float(d))
             out.append(cur)
         self.dT = dT
         self._initial = cur if out else self.virgin()
+        self._initial_cracked = [g.cracked for g in self.groups]
         return out
 
     def initial(self) -> State:
@@ -219,6 +260,7 @@ class HistoryPoint:
 
 def run_history(v: Vessel, p_af: float, proof: float, meop: float, steps: int = 16) -> list[HistoryPoint]:
     """Pressure history from the post-cure state (call ``v.cool`` first for thermal residual stresses)."""
+    v.reset_damage()
     pts: list[HistoryPoint] = [HistoryPoint("start", v.initial())]
     cur = pts[0].state
     for phase, target, n in (
@@ -255,6 +297,7 @@ def first_yield_pressure(v: Vessel) -> float:
 
 
 def reverse_yield_ratio(v: Vessel, p_af: float) -> float:
+    v.reset_damage()
     s = v.ramp(v.initial(), p_af, 12)[-1]
     # elastic unloading trial (no reverse plasticity allowed)
     z = v.solve(0.0, s.liner, s.eps)
@@ -270,7 +313,7 @@ def burst(v: Vessel, start: State, p_guess: float) -> tuple[float, str, State]:
     if prev_ratio >= 1.0:  # already failed (e.g. during autofrettage): no further load capacity
         return cur.p, max(ratios0.items(), key=lambda kv: kv[1])[0], cur
     for _ in range(2000):
-        nxt = v.solve(cur.p + p_step, cur.liner, cur.eps)
+        nxt = v.solve_damaged(cur.p + p_step, cur, cur.eps)
         ratios = v.fiber_ratio(nxt.eps)
         mode, r = max(ratios.items(), key=lambda kv: kv[1])
         if r >= 1.0:

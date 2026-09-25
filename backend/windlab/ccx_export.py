@@ -236,7 +236,7 @@ def run_and_compare(project: S.Project, workdir: str, max_len: float = 8.0, ccx:
     with open(os.path.join(workdir, "vessel.dat")) as f:
         res = parse_midplane(f.read())
     b = build(project)
-    st, _ = structural(b)
+    st, _ = structural(b, damage=False)  # the CalculiX deck is linear-elastic: compare like with like
     af_peak = max((h for h in st.history if h.phase == "autofrettage"), key=lambda h: h.pressure)
     ours = {"CURE": st.cure_residual, "AUTOFRETTAGE": af_peak, "UNLOAD_AF": st.residual, "PROOF": st.at_proof,
             "MEOP": st.at_meop}

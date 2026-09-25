@@ -37,7 +37,9 @@ What is checked, against what, and how well it agrees. Everything below is an au
 | Shell FE, liner-only cylinder | hoop p Ri / t, axial resultant p Ri^2 / (2 R) | 0.2 % |
 | Shell FE, sphere membrane | equal biaxial | 0.5 % |
 | Shell FE vs cylinder model (thick composite) | independent formulation | 1-6 % |
-| **CalculiX axisymmetric solid FE vs cylinder model** (desktop example, composite hoop strain at mid-plane) | independent open-source solver | **2-6 %** (cure, autofrettage, proof, MEOP) |
+| **CalculiX axisymmetric solid FE vs cylinder model** (desktop example, composite hoop strain at mid-plane) | independent open-source solver | **2-6 %** (cure, autofrettage, proof, MEOP); compared with matrix cracking off, since the deck is linear-elastic |
+| Puck IFF criterion, pure transverse tension / shear / compression | Yt, S, Yc | exact |
+| Progressive shell vs cylinder model burst (desktop example) | independent formulation | within -25 / +5 % (54.7 vs 58.1 MPa; shell sees junction bending) |
 | Burst calibration: suggested efficiency re-run | 0.92 x prediction | 3 % |
 
 The CalculiX comparison also shows what the thin-wall cylinder model cannot: the **liner inner surface**
@@ -65,8 +67,19 @@ Example (1 L desktop vessel, `grbl-10mpa-1l`), hoop strain at the cylinder mid-p
 | Max axis step per G-code segment | adaptive refinement limits | 5 deg mandrel / 10 mm carriage / 10 deg eye (warnings where the geometry forces more) |
 | Posts: LinuxCNC, GRBL 2/3-axis, grblHAL 4-axis | letters, feeds, line length | every G1 in G93 carries F; GRBL lines <= 70 chars |
 
+## Progressive failure findings
+
+The progressive model resolves effects the cylinder model cannot, and it changed two design rules:
+
+- Staggered hoop drop-offs concentrate bending at the ends of the hoop stack: the 30 MPa example bursts at
+  53.8 MPa with staggered hoops but 73.9 MPa (matching netting, ~72) with full-length hoops.
+- Hemispherical domes with a thin helical build-up fail in the dome first (70 MPa example: first fibre
+  failure at 61 MPa in dome A).
+
 ## Not validated (yet)
 
 - The Abaqus deck has not been run in Abaqus by the authors (conventions reviewed: SAX1 DOFs, normals, ply
   order, OFFSET, per-element pressure scaling).
+- Puck parameters and resin transverse strengths are generic carbon/epoxy values; progressive burst needs
+  test calibration like every other prediction.
 - Material data are datasheet values; burst and fatigue predictions need test calibration (`/api/calibrate`).

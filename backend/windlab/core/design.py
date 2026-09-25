@@ -263,9 +263,11 @@ def dome_netting_stress(b: Build, p: float) -> tuple[np.ndarray, np.ndarray]:
     return base.z[valid], sig[valid]
 
 
-def structural(b: Build) -> tuple[S.StructuralResult, dict]:
+def structural(b: Build, damage: bool = True) -> tuple[S.StructuralResult, dict]:
+    """Cylinder-section analysis; ``damage=False`` disables Puck matrix cracking (linear-elastic composite)."""
     req = b.project.requirements
     v = _vessel(b)
+    v.damage = damage
     if not b.layers:
         raise DesignError("No layers")
     proof = req.meop * req.proof_factor
@@ -273,6 +275,7 @@ def structural(b: Build) -> tuple[S.StructuralResult, dict]:
     # elastic-only burst estimate for window sizing
     T_cure = b.project.composite.cure_temperature
     cure = v.cool(req.temperature_ref - T_cure)
+    v.reset_damage()
     pb_est, _, _ = burst(v, v.initial(), p_req)
     p_lo, p_hi = autofrettage_window(v, proof, pb_est)
     auto = req.autofrettage_pressure is None
@@ -660,8 +663,13 @@ def layer_result(b: Build, bl: BuiltLayer) -> S.LayerResult:
 
 
 # --------------------------------------------------------------------------- sizing
-def suggest_layup(project: S.Project, max_iter: int = 60) -> tuple[list[S.Layer], list[str]]:
-    """Netting-based initial layup refined until burst, mode and stress-ratio checks pass."""
+def suggest_layup(project: S.Project, max_iter: int = 60, progressive: bool = False,
+                  max_progressive: int = 8) -> tuple[list[S.Layer], list[str]]:
+    """Netting-based initial layup refined until burst, mode and stress-ratio checks pass.
+
+    ``progressive``: afterwards, run the progressive-failure shell analysis and add layers where it fails
+    until its burst pressure reaches the requirement (adds ~10 s to a minute per iteration).
+    """
     notes: list[str] = []
     tmpl_hel = next((L for L in project.layers if L.type == "helical"), None)
     tmpl_hoop = next((L for L in project.layers if L.type == "hoop"), None)
@@ -704,9 +712,10 @@ def suggest_layup(project: S.Project, max_iter: int = 60) -> tuple[list[S.Layer]
                 }))
                 ih += 1
             else:
-                off = min(ic * hoop_t.band_width / 2, 0.15 * project.liner.cyl_length)
+                # full-length hoops: staggered drop-offs concentrate bending at the ends of the hoop stack
+                # (progressive analysis of the 30 MPa example: 54 MPa staggered vs 74 MPa full length)
                 seq.append(hoop_t.model_copy(update={
-                    "id": f"hoop{ic + 1}", "passes": 2, "end_offset_a": off, "end_offset_b": off,
+                    "id": f"hoop{ic + 1}", "passes": 2, "end_offset_a": 0.0, "end_offset_b": 0.0,
                 }))
                 ic += 1
         return seq
@@ -764,10 +773,45 @@ def suggest_layup(project: S.Project, max_iter: int = 60) -> tuple[list[S.Layer]
         layers = make(n_hel, n_hoop)
     else:
         notes.append("Did not converge; review the checks")
+    if progressive:
+        layers, n_hel, n_hoop = _progressive_verify(project, layers, make, n_hel, n_hoop, max_progressive, notes)
     layers = _best_stagger(project, layers, notes)
     layers = apply_tension_schedule(project, layers)
     notes.append("Winding tensions set for uniform residual prestress (outermost layer keeps the template tension)")
     return layers, notes
+
+
+def _progressive_verify(project, layers, make, n_hel, n_hoop, max_add, notes):
+    """Add layers where the progressive-failure analysis bursts until it reaches the required burst."""
+    from .progressive import run
+
+    req = project.requirements
+    p_req = req.meop * req.burst_factor
+    for _ in range(max_add + 1):
+        proj = project.model_copy(update={"layers": layers})
+        try:
+            b = build(proj)
+            r = run(b)
+        except DesignError as e:
+            notes.append(f"Progressive verification stopped: {e}")
+            return layers, n_hel, n_hoop
+        if r.burst_pressure >= p_req:
+            notes.append(f"Progressive failure analysis: burst {r.burst_pressure:.1f} MPa >= "
+                         f"{p_req:.1f} MPa required ({n_hel} helical + {n_hoop} hoop layers)")
+            return layers, n_hel, n_hoop
+        crit = b.layers[r.burst_layer].spec if r.burst_layer >= 0 else None
+        where = f"z = {r.burst_z:.0f} mm" if np.isfinite(r.burst_z) else "unknown location"
+        if crit is not None and crit.type == "hoop" or crit is None and abs(r.burst_z) < project.liner.cyl_length / 2:
+            n_hoop += 1
+            added = "hoop"
+        else:
+            n_hel += 1
+            added = "helical"
+        notes.append(f"Progressive burst {r.burst_pressure:.1f} MPa < {p_req:.1f} MPa "
+                     f"({crit.id if crit else 'unknown layer'}, {where}): adding a {added} layer")
+        layers = make(n_hel, n_hoop)
+    notes.append("Progressive verification did not reach the required burst; review the design")
+    return layers, n_hel, n_hoop
 
 
 def _stagger_patterns(n: int, B: float, cap: float) -> dict[str, list[float]]:

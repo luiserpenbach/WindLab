@@ -126,7 +126,8 @@ def generate_examples(write: bool = True) -> list[dict]:
 
     out = []
     for eid, label, prj in _examples_raw():
-        layers, _ = suggest_layup(prj)
+        layers, notes = suggest_layup(prj, progressive=True)
+        print(f"{eid}:", *notes, sep="\n  ")
         project = prj.model_copy(update={"layers": layers})
         out.append({"id": eid, "label": label, "project": project})
         if write:

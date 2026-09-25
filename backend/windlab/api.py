@@ -83,8 +83,10 @@ def post_analyze(project: S.Project):
 
 
 @app.post("/api/suggest-layup")
-def post_suggest(project: S.Project):
-    layers, notes = _design_errors(lambda: suggest_layup(project))
+def post_suggest(project: S.Project, progressive: bool = False):
+    """``?progressive=true`` also verifies (and if needed thickens) the layup with the progressive-failure
+    analysis; this takes up to a few minutes."""
+    layers, notes = _design_errors(lambda: suggest_layup(project, progressive=progressive))
     return {"layers": layers, "notes": notes}
 
 
@@ -211,6 +213,19 @@ def post_ccx_export(project: S.Project):
         return {k: r[k] for k in ("filename", "inp", "elements", "nodes", "materials", "steps")}
 
     return _design_errors(run)
+
+
+@app.post("/api/progressive", response_model=S.ProgressiveResultOut)
+def post_progressive(req: S.ProgressiveRequest):
+    """Progressive failure analysis (nonlinear shell with liner plasticity, Puck IFF, fibre failure).
+    Takes ~10 s to a few minutes depending on the layup."""
+    from .core.progressive import run, to_schema
+
+    def go():
+        b = build(req.project)
+        return to_schema(b, run(b, max_len=req.mesh))
+
+    return _design_errors(go)
 
 
 @app.post("/api/report")

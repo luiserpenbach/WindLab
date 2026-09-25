@@ -12,7 +12,7 @@ mass in g.
 | GET | `/api/machines` | – | `[{id, label, machine: MachineSpec}]` presets |
 | GET | `/api/examples` | – | `[{id, label, project: Project}]` example projects |
 | POST | `/api/analyze` | `Project` | `AnalysisResult` |
-| POST | `/api/suggest-layup` | `Project` | `{layers: Layer[], notes: string[]}` |
+| POST | `/api/suggest-layup` | `Project` (query `progressive=true`: verify with progressive failure, add layers until it passes) | `{layers: Layer[], notes: string[]}` |
 | POST | `/api/path` | `LayerRequest` | `PathResult` (fibre path on the mandrel, 3D) |
 | POST | `/api/simulate` | `LayerRequest` | `SimulationResult` (machine axes over time) |
 | POST | `/api/gcode` | `GcodeRequest` | `{filename, gcode, lines, total_time, warnings}` |
@@ -20,6 +20,7 @@ mass in g.
 | POST | `/api/tension-schedule` | `TensionScheduleRequest` | current vs recommended tensions for uniform prestress |
 | POST | `/api/optimise` | `OptimiseRequest` | `OptimiseResult`: minimum-mass layup with all blocking checks passing |
 | POST | `/api/calibrate` | `Project` (with `tests`) | `CalibrationResult`: measured vs predicted, suggested efficiency |
+| POST | `/api/progressive` | `{project, mesh}` | `ProgressiveResultOut`: progressive-failure burst, first IFF / FF / liner-yield pressures, events, pressure-strain curve, damage along z (10 s to minutes) |
 | POST | `/api/report` | `Project` | `{html}`: self-contained printable design report |
 | POST | `/api/ccx-export` | `Project` | `{filename, inp, elements, nodes, materials, steps}` CalculiX axisymmetric solid deck (CLI `windlab ccx --run` also compares with WindLab) |
 | POST | `/api/fea-export` | `Project` | `{filename, inp, csv_filename, csv, elements, materials}` Abaqus SAX1 deck + layup CSV |

@@ -51,7 +51,8 @@ truth for fields and units). Server-side saves go to `~/.windlab/projects`
   arclength, shooting for each end's turnaround radius (unequal polar openings), auto cylinder angle that
   balances slippage on both domes, per-layer friction checks, dwell-slippage info.
 - **Pattern closure solver**: circuits/advance with gcd(n,k)=1, dwell per turnaround, coverage, pattern
-  number, leading/lagging; auto or user-picked.
+  number, leading/lagging; auto or user-picked. **Pattern style** per layer: request a pattern number
+  (1-2 = large diamonds, high = fine mosaic) and leading/lagging; the solver finds the closest closing pattern.
 - **Band-level thickness simulation**: every band of every circuit laid with its real width and
   cross-section (rectangular / lenticular / elliptical) onto a surface grid: gaps, overlaps, crossover
   ridges, polar build-up peaks.
@@ -62,6 +63,10 @@ truth for fields and units). Server-side saves go to `~/.windlab/projects`
   (hoop-first check, helical reserve); stress-rupture ratios; liner fatigue (SWT).
 - **Whole-vessel axisymmetric laminated shell FE** (liner + every layer with local thickness and angle):
   fibre utilisation along the domes, liner bending hot spots, burst estimate incl. domes, hot-spot fatigue.
+- **Progressive failure analysis** (nonlinear shell): J2 liner through the thickness, Puck inter-fibre
+  failure (modes A/B/C) with stiffness degradation, fibre failure per ply, full load history (cure,
+  autofrettage, proof, MEOP) then a burst ramp; reports first matrix crack, first fibre failure, liner
+  yield, the burst location and damage maps. The cylinder model also includes Puck matrix cracking.
 - Netting sizing, dome netting check, **winding tension loss** and uniform-prestress tension schedule,
   **fibre bridging** detection, predicted **water-jacket volumetric expansion**.
 - **Suggest layup** (sizes to every check), **mass optimiser**, **test-data calibration** (burst /

@@ -81,6 +81,9 @@ class CustomResin(BaseModel):
     cte: float = Field(60e-6, description="CTE [1/K]")
     cure: str = Field("", description="Typical cure schedule (for the traveller)")
     cure_temperature: float = Field(120.0, description="Typical stress-free (final cure) temperature [degC]")
+    Yt: float = Field(55.0, gt=0, description="UD ply transverse tensile strength [MPa]")
+    Yc: float = Field(200.0, gt=0, description="UD ply transverse compressive strength [MPa]")
+    S12: float = Field(75.0, gt=0, description="UD ply in-plane shear strength [MPa]")
 
 
 class CustomLiner(BaseModel):
@@ -489,6 +492,39 @@ class CalibrationResult(BaseModel):
     suggested_efficiency: Optional[float] = Field(None, description="Translation efficiency matching the mean")
     b_basis_efficiency: Optional[float] = Field(None, description="Mean - k*sd (one-sided tolerance, 90%/95%)")
     notes: list[str]
+
+
+class ProgressiveRequest(BaseModel):
+    project: Project
+    mesh: float = Field(4.0, ge=1.0, le=20.0, description="Max element length along the meridian [mm]")
+
+
+class FailureEvent(BaseModel):
+    pressure: float
+    phase: str
+    kind: Literal["liner_yield", "iff", "ff", "liner_rupture", "burst"]
+    layer: str = Field(..., description="Layer id, or 'liner'")
+    z: float
+    count: int = Field(1, description="Number of such events in this phase for this layer")
+
+
+class ProgressiveResultOut(BaseModel):
+    burst_pressure: float
+    required_burst: float
+    burst_z: Optional[float]
+    burst_layer: Optional[str]
+    burst_zone: str = Field(..., description="cylinder / junction A|B / dome A|B")
+    first_iff_pressure: Optional[float]
+    first_ff_pressure: Optional[float]
+    liner_yield_pressure: Optional[float]
+    events: list[FailureEvent]
+    curve_pressure: list[float] = Field(..., description="Burst ramp pressures [MPa]")
+    curve_hoop_strain: list[float] = Field(..., description="Mid-cylinder hoop strain along the ramp")
+    z: list[float]
+    ff_fraction: list[list[float]] = Field(..., description="Per layer: fraction of points with fibre failure")
+    iff_fraction: list[list[float]] = Field(..., description="Per layer: fraction of points with matrix cracks")
+    liner_peeq: list[float] = Field(..., description="Liner equivalent plastic strain at burst")
+    notes: list[str] = []
 
 
 class GcodeRequest(BaseModel):

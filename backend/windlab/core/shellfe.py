@@ -271,7 +271,7 @@ def evaluate(b: Build, meop: float, burst_cyl: float, cycles_cyl: float) -> FEEv
         ratio[k] = np.where(thick[:, k] > 1e-3, e1, np.nan)
     half = b.project.liner.cyl_length / 2
     lin = b.project.liner
-    cyl = np.abs(sol.z) < max(half - 20.0, 0.25 * half)
+    cyl = np.abs(sol.z) < max(0.2 * half, 5.0)  # mid-cylinder, where the cylinder model applies
     # the bosses are rigid rings: keep the evaluation clear of the clamped edge
     rb = np.where(sol.z < 0, lin.boss_radius_a, lin.boss_radius_b)
     valid = sol.r > rb + 3.0 * lin.wall_thickness
