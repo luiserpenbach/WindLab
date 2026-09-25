@@ -95,7 +95,10 @@ def post_path(req: S.LayerRequest):
         pts = path.xyz()
         idx = downsample(len(pts), req.max_points)
         breaks = sorted({int(np.searchsorted(idx, c)) for c in path.circuit_starts})
-        return S.PathResult(layer_id=req.layer_id, points=np.round(pts[idx], 3).tolist(), circuit_breaks=breaks)
+        alpha = np.degrees(path.alpha[idx]) if path.alpha is not None else np.zeros(len(idx))
+        lam = path.lam[idx] if path.lam is not None else np.zeros(len(idx))
+        return S.PathResult(layer_id=req.layer_id, points=np.round(pts[idx], 3).tolist(), circuit_breaks=breaks,
+                            alpha=np.round(alpha, 3).tolist(), slippage=np.round(lam, 4).tolist())
 
     return _design_errors(run)
 

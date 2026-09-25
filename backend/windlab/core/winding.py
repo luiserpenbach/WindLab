@@ -8,6 +8,7 @@ substituting ``s = s_turn +/- w^2``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 
@@ -93,6 +94,8 @@ class PathPoints:
     r: np.ndarray
     phi: np.ndarray  # cumulative azimuth [rad]
     circuit_starts: list[int]
+    alpha: Optional[np.ndarray] = None  # winding angle [rad]
+    lam: Optional[np.ndarray] = None  # slippage coefficient
 
     def xyz(self) -> np.ndarray:
         # negative sine so the mandrel turns in the positive sense while winding
@@ -113,32 +116,39 @@ def _dwell_arc(z: float, r: float, phi0: float, dwell: float, n: int) -> tuple[n
 
 
 def helical_layer_path(
-    gp: GeodesicPass, n_circuits: int, dwell: float, shift_per_circuit: float, samples: int
+    gp, n_circuits: int, dwell: float, shift_per_circuit: float, samples: int
 ) -> PathPoints:
     """Full helical layer: n circuits (A->B, dwell, B->A, dwell) laid end to end.
 
-    ``shift_per_circuit`` is the total azimuth advance per circuit (2 passes +
-    2 dwells) and is only used as a consistency check here.
+    ``gp`` is a pass from turnaround A to turnaround B (``GeodesicPass`` or
+    ``paths.HelicalPass``). ``shift_per_circuit`` is only a consistency check.
     """
-    p = resample_pass(gp, samples)
-    zs, rs, ps, starts = [], [], [], []
+    p = gp.resample(samples) if hasattr(gp, "resample") else resample_pass(gp, samples)
+    alpha = getattr(p, "alpha", np.arcsin(np.clip(gp.r0 / np.maximum(p.r, 1e-9), 0, 1)))
+    lam = getattr(p, "lam", np.zeros_like(p.z))
+    slip = (getattr(gp, "dwell_slip_a", 0.0), getattr(gp, "dwell_slip_b", 0.0))
+    zs, rs, ps, als, lms, starts = [], [], [], [], [], []
+
+    def add(z, r, ph, al, lm):
+        zs.append(z), rs.append(r), ps.append(ph), als.append(al), lms.append(lm)
+
     phi = 0.0
     for _ in range(n_circuits):
         starts.append(sum(len(a) for a in zs))
-        # A -> B
-        zs.append(p.z), rs.append(p.r), ps.append(phi + p.phi)
+        add(p.z, p.r, phi + p.phi - p.phi[0], alpha, lam)  # A -> B
         phi += p.advance
         dz, dr, dp = _dwell_arc(p.z[-1], p.r[-1], phi, dwell, samples)
-        zs.append(dz), rs.append(dr), ps.append(dp)
+        add(dz, dr, dp, np.full(len(dz), np.pi / 2), np.full(len(dz), slip[1]))
         phi += dwell
-        # B -> A (same geodesic walked backwards, still advancing in phi)
-        zs.append(p.z[::-1][1:]), rs.append(p.r[::-1][1:]), ps.append(phi + (p.advance - p.phi[::-1])[1:])
+        # B -> A: the same path walked backwards, still advancing in phi
+        add(p.z[::-1][1:], p.r[::-1][1:], phi + (p.phi[-1] - p.phi[::-1])[1:], alpha[::-1][1:], lam[::-1][1:])
         phi += p.advance
         dz, dr, dp = _dwell_arc(p.z[0], p.r[0], phi, dwell, samples)
-        zs.append(dz), rs.append(dr), ps.append(dp)
+        add(dz, dr, dp, np.full(len(dz), np.pi / 2), np.full(len(dz), slip[0]))
         phi += dwell
     assert abs((2 * p.advance + 2 * dwell) - shift_per_circuit) < 1e-6 or shift_per_circuit == 0
-    return PathPoints(np.concatenate(zs), np.concatenate(rs), np.concatenate(ps), starts)
+    return PathPoints(np.concatenate(zs), np.concatenate(rs), np.concatenate(ps), starts,
+                      np.concatenate(als), np.concatenate(lms))
 
 
 def hoop_layer_path(
@@ -164,4 +174,6 @@ def hoop_layer_path(
         zs.append(zd), ps.append(pd)
         phi += np.pi
     z = np.concatenate(zs)
-    return PathPoints(z, profile.radius_at(z), np.concatenate(ps), starts)
+    r = profile.radius_at(z)
+    alpha = np.full(len(z), np.arctan2(2 * np.pi * float(np.mean(r)), band_width))
+    return PathPoints(z, r, np.concatenate(ps), starts, alpha, np.zeros(len(z)))

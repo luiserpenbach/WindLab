@@ -68,8 +68,20 @@ class Layer(BaseModel):
     band_width: float = Field(6.0, gt=0, description="Band width [mm]")
     tension: float = Field(20.0, ge=0, description="Total band tension [N]")
     # helical
+    winding: Literal["geodesic", "non-geodesic"] = Field(
+        "geodesic", description="Helical path type; non-geodesic uses friction to steer the fibre on the domes"
+    )
+    angle: Optional[float] = Field(
+        None, gt=0, lt=85, description="Non-geodesic: winding angle on the cylinder [deg]; null = auto"
+    )
+    friction: float = Field(
+        0.2, ge=0, le=1, description="Available fibre/surface friction coefficient (max slippage |kg/kn|)"
+    )
     turnaround_offset: float = Field(
-        0.0, ge=0, description="Extra turnaround radius beyond boss + band/2 [mm] (dome stagger)"
+        0.0, ge=0, description="Extra turnaround radius beyond boss + band/2 at end A (and B if unset) [mm]"
+    )
+    turnaround_offset_b: Optional[float] = Field(
+        None, ge=0, description="Extra turnaround radius at end B [mm]; null = same as end A"
     )
     pattern: Optional[PatternChoice] = Field(None, description="null = auto-select best pattern")
     dwell_max: float = Field(90.0, ge=0, le=360, description="Max dwell per turnaround [deg]")
@@ -165,6 +177,13 @@ class LayerResult(BaseModel):
     thickness: float = Field(..., description="Cured thickness in the cylinder [mm]")
     band_thickness: float
     turnaround_radius: Optional[float] = None
+    winding: Literal["geodesic", "non-geodesic"] = "geodesic"
+    turnaround_a: Optional[float] = Field(None, description="Turnaround radius end A [mm]")
+    turnaround_b: Optional[float] = Field(None, description="Turnaround radius end B [mm]")
+    slippage_a: float = Field(0.0, description="Slippage coefficient kg/kn used on dome A")
+    slippage_b: float = Field(0.0, description="Slippage coefficient kg/kn used on dome B")
+    dwell_slippage: float = Field(0.0, description="Slippage a dwell on the turnaround circle would need")
+    friction: float = 0.0
     z_start: float
     z_end: float
     thickness_profile: Curve = Field(..., description="x = z [mm], y = thickness [mm]")
@@ -233,6 +252,8 @@ class PathResult(BaseModel):
     layer_id: str
     points: list[list[float]] = Field(..., description="[x, y, z] in mandrel frame, x = axis [mm]")
     circuit_breaks: list[int] = Field(..., description="Indices where each circuit starts")
+    alpha: list[float] = Field(default_factory=list, description="Winding angle at each point [deg]")
+    slippage: list[float] = Field(default_factory=list, description="Slippage coefficient kg/kn at each point")
 
 
 class MachineFrame(BaseModel):

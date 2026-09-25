@@ -22,7 +22,8 @@ from .structural import (
     run_history,
     von_mises,
 )
-from .winding import GeodesicPass, geodesic_pass
+from . import paths
+from .paths import HelicalPass
 
 REVERSE_YIELD_LIMIT = 0.9  # Bauschinger knock-down on the compressive reverse-yield check
 AF_FIBER_RATIO_LIMIT = 0.75  # max fibre strain ratio allowed during autofrettage
@@ -44,7 +45,7 @@ class BuiltLayer:
     angle: float  # rad at mid-plane
     R_mid: float  # radius at mid-plane of the base surface
     r0: Optional[float] = None
-    gp: Optional[GeodesicPass] = None
+    gp: Optional[HelicalPass] = None
     pattern: Optional[pat.Pattern] = None
     candidates: list[pat.Pattern] = field(default_factory=list)
     z_start: float = 0.0
@@ -83,15 +84,6 @@ class Build:
         return self.layers[-1].top if self.layers else self.liner_outer
 
 
-def _helical_thickness(base: Profile, t_cyl: float, R_ref: float, r0: float, B: float) -> np.ndarray:
-    """Band-averaged geodesic thickness: fibre conservation t*r*cos(a) = const,
-    averaged over the band width so it stays finite at the turnaround."""
-    C = t_cyl * math.sqrt(R_ref**2 - r0**2)
-    hi = np.arccosh(np.maximum((base.r + B / 2) / r0, 1.0))
-    lo = np.arccosh(np.maximum((base.r - B / 2) / r0, 1.0))
-    return C * (hi - lo) / B
-
-
 def build(project: S.Project) -> Build:
     lin = project.liner
     try:
@@ -101,7 +93,6 @@ def build(project: S.Project) -> Build:
     comp = project.composite
     fiber = get_fiber(comp.fiber)
     ply = ply_properties(fiber, get_resin(comp.resin), comp.fiber_volume_fraction, comp.translation_efficiency)
-    boss = max(lin.boss_radius_a, lin.boss_radius_b)
     half = lin.cyl_length / 2.0
 
     layers: list[BuiltLayer] = []
@@ -111,14 +102,26 @@ def build(project: S.Project) -> Build:
         R_mid = float(surf.radius_at(0.0))
         warnings: list[str] = []
         if L.type == "helical":
-            r0 = boss + L.band_width / 2 + L.turnaround_offset
-            if r0 >= 0.95 * R_mid:
-                raise DesignError(f"Layer {i + 1}: turnaround radius {r0:.1f} mm too close to the cylinder radius")
-            angle = math.asin(r0 / R_mid)
+            off_b = L.turnaround_offset if L.turnaround_offset_b is None else L.turnaround_offset_b
+            r_a = lin.boss_radius_a + L.band_width / 2 + L.turnaround_offset
+            r_b = lin.boss_radius_b + L.band_width / 2 + off_b
+            if max(r_a, r_b) >= 0.95 * R_mid:
+                raise DesignError(f"Layer {i + 1}: turnaround radius {max(r_a, r_b):.1f} mm too close to the "
+                                  "cylinder radius")
             try:
-                gp = geodesic_pass(surf, r0)
+                if L.winding == "geodesic":
+                    r0 = max(r_a, r_b)
+                    gp = paths.geodesic(surf, r0)
+                    if abs(r_a - r_b) > 1e-6:
+                        warnings.append(f"Geodesic path turns at {r0:.1f} mm at both ends; use non-geodesic "
+                                        "winding to turn closer to the smaller boss")
+                else:
+                    a_mid = math.radians(L.angle) if L.angle else None
+                    gp = paths.non_geodesic(surf, half, a_mid, r_a, r_b)
+                    r0 = gp.r0
             except GeometryError as e:
                 raise DesignError(f"Layer {i + 1}: {e}") from e
+            angle = gp.alpha_mid
             cands = pat.candidates(gp.advance, R_mid, angle, L.band_width, math.radians(L.dwell_max))
             if L.pattern is not None:
                 try:
@@ -138,7 +141,7 @@ def build(project: S.Project) -> Build:
                 chosen = wide[0]
                 warnings.append("No pattern within the dwell limit; using the best available")
             t_cyl = L.thickness_override or 2 * t_b * chosen.coverage
-            t = _helical_thickness(surf, t_cyl, R_mid, r0, L.band_width)
+            t = gp.thickness(surf, t_cyl, R_mid, L.band_width)
             bl = BuiltLayer(L, i, surf, surf.offset(t), t, t_cyl, t_b, angle, R_mid, r0, gp, chosen, cands,
                             float(surf.z[0]), float(surf.z[-1]), warnings)
         else:
@@ -225,11 +228,10 @@ def dome_netting_stress(b: Build, p: float) -> tuple[np.ndarray, np.ndarray]:
     for bl in b.layers:
         if bl.spec.type != "helical":
             continue
-        rk = bl.base.r
-        cos2 = np.clip(1.0 - (bl.r0 / rk) ** 2, 0.0, 1.0)
+        cos2 = np.cos(bl.gp.alpha_at_z(bl.base.z)) ** 2
         denom += bl.thickness * cos2
         # netting is meaningless inside the turnaround bands (boss and liner carry load there)
-        r_excl = max(r_excl, bl.r0 + 2 * bl.spec.band_width)
+        r_excl = max(r_excl, max(bl.gp.r_a, bl.gp.r_b) + 2 * bl.spec.band_width)
     valid = (denom > 1e-6) & (base.r > r_excl) & (u > 0.05)
     sig = np.where(valid, p * base.r / (2 * np.maximum(u, 1e-9) * np.maximum(denom, 1e-12)), np.nan)
     return base.z[valid], sig[valid]
@@ -343,6 +345,14 @@ def checks(b: Build, st: Optional[S.StructuralResult], extra: dict) -> list[S.Ch
     for bl in b.layers:
         for w in bl.warnings:
             out.append(S.Check(id=f"layer.{bl.spec.id}", label=f"Layer {bl.index + 1}", status="warn", detail=w))
+    for bl in b.layers:
+        if bl.gp is None or bl.spec.winding != "non-geodesic":
+            continue
+        lam = max(abs(bl.gp.lam_a), abs(bl.gp.lam_b))
+        mu = bl.spec.friction
+        out.append(_chk(f"layer.{bl.spec.id}.slip", f"Layer {bl.index + 1} slippage", lam <= mu,
+                        warn=lam <= 1.25 * mu, value=lam, limit=mu,
+                        detail="Required |kg/kn| on the domes vs. available friction; above it the fibre slides"))
     if st is None:
         out.append(S.Check(id="layup.empty", label="Layup", status="fail", detail="Add layers or use Suggest layup"))
         return out
@@ -426,6 +436,13 @@ def layer_result(b: Build, bl: BuiltLayer) -> S.LayerResult:
         thickness=bl.t_cyl,
         band_thickness=bl.t_band,
         turnaround_radius=bl.r0,
+        winding=bl.spec.winding if bl.spec.type == "helical" else "geodesic",
+        turnaround_a=bl.gp.r_a if bl.gp else None,
+        turnaround_b=bl.gp.r_b if bl.gp else None,
+        slippage_a=bl.gp.lam_a if bl.gp else 0.0,
+        slippage_b=bl.gp.lam_b if bl.gp else 0.0,
+        dwell_slippage=max(bl.gp.dwell_slip_a, bl.gp.dwell_slip_b) if bl.gp else 0.0,
+        friction=bl.spec.friction,
         z_start=bl.z_start,
         z_end=bl.z_end,
         thickness_profile=S.Curve(x=bl.base.z.tolist(), y=bl.thickness.tolist()),
