@@ -200,6 +200,17 @@ def post_calibrate(project: S.Project):
     return _design_errors(lambda: calibrate(project))
 
 
+@app.post("/api/ccx-export")
+def post_ccx_export(project: S.Project):
+    from .ccx_export import export
+
+    def run():
+        r = export(project)
+        return {k: r[k] for k in ("filename", "inp", "elements", "nodes", "materials", "steps")}
+
+    return _design_errors(run)
+
+
 @app.post("/api/report")
 def post_report(project: S.Project):
     from .report import report_html

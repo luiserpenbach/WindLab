@@ -25,6 +25,11 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("project")
     g.add_argument("-o", "--output")
     g.add_argument("--layers", nargs="*", help="layer ids (default: all)")
+    c = sub.add_parser("ccx", help="export a CalculiX axisymmetric solid model (optionally run and compare)")
+    c.add_argument("project")
+    c.add_argument("-o", "--output")
+    c.add_argument("--run", metavar="DIR", help="run ccx in DIR and compare with the cylinder model")
+    c.add_argument("--mesh", type=float, default=4.0, help="max element length along the meridian [mm]")
     args = ap.parse_args(argv)
 
     if args.cmd == "serve":
@@ -57,6 +62,20 @@ def main(argv: list[str] | None = None) -> int:
         for w in prog.warnings:
             print("warning:", w, file=sys.stderr)
         print(f"{out}: {len(prog.lines)} lines, est. {prog.total_time / 60:.1f} min")
+        return 0
+    if args.cmd == "ccx":
+        from .ccx_export import export, run_and_compare
+
+        prj = _load(args.project)
+        if args.run:
+            for r in run_and_compare(prj, args.run, max_len=args.mesh):
+                print(f"{r['step']:13s} hoop strain  ccx inner {r['ccx_inner']:.5f}  outer {r['ccx_outer']:.5f}  "
+                      f"windlab {r['windlab']:.5f}")
+            return 0
+        meta = export(prj, max_len=args.mesh)
+        out = args.output or meta["filename"]
+        Path(out).write_text(meta["inp"])
+        print(f"{out}: {meta['elements']} elements, {meta['nodes']} nodes, {meta['materials']} materials")
         return 0
     return 2
 

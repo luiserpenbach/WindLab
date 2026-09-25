@@ -74,7 +74,10 @@ truth for fields and units). Server-side saves go to `~/.windlab/projects`
 - Post-processors: **LinuxCNC** (G93, `M68` tension, `(MSG)`/`M0` pauses) and **GRBL / grblHAL** (G93,
   spindle-PWM tension, float-safe rotary resets, letter validation), any axis mapping / scale / direction.
 - Traveller (BOM, prep, per-layer sign-off, cure, autofrettage/proof with expansion targets), printable
-  **design report**, **Abaqus SAX1 composite export** + per-element layup CSV.
+  **design report**, **Abaqus SAX1 composite export** + per-element layup CSV, **CalculiX axisymmetric
+  solid export** (open source; `windlab ccx project.json --run DIR` runs it and compares with WindLab).
+- **Validation**: see [docs/VALIDATION.md](docs/VALIDATION.md) (analytic references, independent FE,
+  G-code interpretation).
 
 ## Engineering model: know the limits
 
