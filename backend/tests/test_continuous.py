@@ -78,3 +78,16 @@ def test_continuous_gcode_verifies():
     assert "Transition" in prog.text
     sep = generate(_desktop(enabled=False))
     assert sep.text.count("M0") == len(p.layers)
+
+
+def test_continuous_joins_on_four_axis_machine():
+    from windlab.presets import _machine
+
+    p = _desktop(enabled=True).model_copy(update={"machine": _machine("linuxcnc-4axis")})
+    prog = generate(p)
+    v = verify(prog.text)
+    assert not v.errors
+    assert v.total_time == pytest.approx(prog.total_time, rel=1e-4)
+    # the eye roll is continued modulo 180 deg at every join: no move turns it by more than a few degrees
+    eye = p.machine.eye.letter
+    assert v.max_step.get(eye, 0.0) < 45.0

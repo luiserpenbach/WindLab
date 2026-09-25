@@ -242,10 +242,11 @@ def post_progressive(req: S.ProgressiveRequest):
 
 
 @app.post("/api/report")
-def post_report(project: S.Project):
+def post_report(project: S.Project, progressive: bool = False):
+    """``?progressive=true`` adds the progressive-failure analysis (10 s to minutes)."""
     from .report import report_html
 
-    return _design_errors(lambda: {"html": report_html(project)})
+    return _design_errors(lambda: {"html": report_html(project, progressive)})
 
 
 @app.post("/api/traveller")

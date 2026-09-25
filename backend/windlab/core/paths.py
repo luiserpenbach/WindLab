@@ -393,11 +393,15 @@ def _key(profile: Profile, *args) -> tuple:
     return (hash(profile.z.tobytes()), hash(profile.r.tobytes())) + tuple(round(float(a), 9) for a in args)
 
 
+def _cache_put(key, value) -> None:
+    if len(_CACHE) > 1024:
+        _CACHE.pop(next(iter(_CACHE)))
+    _CACHE[key] = value
+
+
 def _cached(key, fn):
     if key not in _CACHE:
-        if len(_CACHE) > 256:
-            _CACHE.pop(next(iter(_CACHE)))
-        _CACHE[key] = fn()
+        _cache_put(key, fn())
     return _CACHE[key]
 
 
@@ -445,20 +449,29 @@ def balanced_angle(profile: Profile, z_tan: float, r_a: float, r_b: float) -> fl
     return _cached(("angle",) + _key(profile, z_tan, r_a, r_b), run)
 
 
-def non_geodesic(profile: Profile, z_tan: float, alpha_mid: Optional[float], r_a: float, r_b: float) -> HelicalPass:
+def non_geodesic(profile: Profile, z_tan: float, alpha_mid: Optional[float], r_a: float, r_b: float,
+                 dl: float = 0.8) -> HelicalPass:
     """Geodesic on the cylinder at ``alpha_mid``, constant-slippage domes turning at r_a / r_b.
 
-    ``alpha_mid = None`` picks the angle that balances the slippage on both domes.
+    ``alpha_mid = None`` picks the angle that balances the slippage on both domes. ``dl``: integration step
+    along the fibre [mm].
     """
     if alpha_mid is None:
         alpha_mid = balanced_angle(profile, z_tan, r_a, r_b)
-    return _cached(("ng",) + _key(profile, z_tan, alpha_mid, r_a, r_b),
-                   lambda: _non_geodesic(profile, z_tan, alpha_mid, r_a, r_b))
+    return _cached(("ng",) + _key(profile, z_tan, alpha_mid, r_a, r_b, dl),
+                   lambda: _non_geodesic(profile, z_tan, alpha_mid, r_a, r_b, dl))
 
 
-def _non_geodesic(profile: Profile, z_tan: float, alpha_mid: float, r_a: float, r_b: float) -> HelicalPass:
-    leg_b = _Side(profile, z_tan).leg(alpha_mid, r_b)
-    leg_a = _Side(_mirror(profile), z_tan).leg(alpha_mid, r_a)
+def _sides(profile: Profile, z_tan: float) -> tuple["_Side", "_Side"]:
+    """(side A, side B) surface tables, cached: building them costs as much as a few shootings."""
+    return _cached(("sides",) + _key(profile, z_tan), lambda: (_Side(_mirror(profile), z_tan), _Side(profile, z_tan)))
+
+
+def _non_geodesic(profile: Profile, z_tan: float, alpha_mid: float, r_a: float, r_b: float,
+                  dl: float = 0.8) -> HelicalPass:
+    side_a, side_b = _sides(profile, z_tan)
+    leg_b = side_b.leg(alpha_mid, r_b, dl)
+    leg_a = side_a.leg(alpha_mid, r_a, dl)
     s_total = profile.s[-1]
     # assemble A turnaround -> mid -> B turnaround
     sa = s_total - leg_a.s[::-1]

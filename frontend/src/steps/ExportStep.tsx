@@ -190,6 +190,8 @@ export function ExportPanel() {
   const s = useExport();
   const [mode, setMode] = useState<'all' | 'some'>('all');
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  // include the (slow) progressive-failure analysis in the design report
+  const [reportProg, setReportProg] = useState(false);
   const ids = project.layers.map((l) => l.id);
   const selIds = mode === 'all' ? null : ids.filter((id) => picked.has(id));
 
@@ -217,7 +219,7 @@ export function ExportPanel() {
     }
     store.set({ reportBusy: true, reportError: null, reportBlocked: false });
     try {
-      const r = await api.report(project);
+      const r = await api.report(project, undefined, reportProg);
       const old = store.get().report;
       if (old) URL.revokeObjectURL(old.url);
       const url = URL.createObjectURL(new Blob([r.html], { type: 'text/html;charset=utf-8' }));
@@ -382,6 +384,13 @@ export function ExportPanel() {
           <Button icon="print" disabled={s.reportBusy} onClick={genReport}>
             Design report
           </Button>
+          <label
+            className="check-row small"
+            title="Add the progressive failure analysis (burst sequence, damage events). This can take a few minutes."
+          >
+            <input type="checkbox" checked={reportProg} onChange={(e) => setReportProg(e.target.checked)} />
+            include progressive failure
+          </label>
           {s.reportBusy ? <Spinner size={12} label="Generating the report" /> : null}
           {s.report ? (
             <>

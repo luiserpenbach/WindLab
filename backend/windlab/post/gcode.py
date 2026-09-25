@@ -145,6 +145,11 @@ class GrblPost(Post):
 POSTS = {"linuxcnc": LinuxCNCPost, "grbl": GrblPost}
 
 
+def _feed(post: Post, f: float) -> str:
+    """Inverse-time feed word value with about 4 significant digits (slow moves have F well below 1)."""
+    return post.fmt(f, max(2, 3 - int(np.floor(np.log10(max(f, 1e-9))))))
+
+
 def _safe_radius(motions: list[Motion]) -> float:
     return float(max(mo.y.max() for mo in motions))
 
@@ -227,6 +232,11 @@ def generate(project: S.Project, layer_ids: list[str] | None = None) -> Program:
                 gap = (mc["mandrel"][0] - cur) * wind_dir
                 if gap < -1e-6:
                     mc["mandrel"] = mc["mandrel"] + wind_dir * period * np.ceil(-gap / period)
+        if joined and "eye" in mc and m.eye:
+            # the band is symmetric: the eye roll has a period of 180 deg, take the equivalent nearest to where
+            # the eye is (the roll accumulates over a layer)
+            pe = 180.0 * abs(m.eye.scale)
+            mc["eye"] = mc["eye"] + pe * np.round((prev_pos["eye"] - mc["eye"][0]) / pe)
         if m.rotary_reset != "none" and prev_end is not None:
             L += post.set_rotary(prev_end % period)
         first = {k: float(v[0]) for k, v in mc.items()}
@@ -240,7 +250,7 @@ def generate(project: S.Project, layer_ids: list[str] | None = None) -> Program:
             if d > 1e-3:
                 t_join = max(0.5, d / 20.0)
                 L.append("G93")
-                L.append(post.words("G1", *post.axis_words(first), f"F{post.fmt(60.0 / t_join, 2)}"))
+                L.append(post.words("G1", *post.axis_words(first), f"F{_feed(post, 60.0 / t_join)}"))
                 prog.total_time += t_join
         else:
             safe_cf = float(machine_coords(m, [0], [safe], [0], [0])["crossfeed"][0])
@@ -269,7 +279,7 @@ def generate(project: S.Project, layer_ids: list[str] | None = None) -> Program:
                 mc["mandrel"][i:] -= cur - cur % period
             pos = {k: float(v[i]) for k, v in mc.items()}
             f = 60.0 / max(float(dt[i - 1]), 1e-4)
-            L.append(post.words("G1", *post.axis_words(pos), f"F{post.fmt(f, 2)}"))
+            L.append(post.words("G1", *post.axis_words(pos), f"F{_feed(post, f)}"))
         prev_end = float(mc["mandrel"][-1])
         prev_pos = {k: float(v[-1]) for k, v in mc.items()}
         prog.total_time += mo.total_time
