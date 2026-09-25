@@ -152,9 +152,24 @@ def post_tension_schedule(req: S.TensionScheduleRequest):
 @app.post("/api/gcode")
 def post_gcode(req: S.GcodeRequest):
     def run():
+        from .post.verify import verify
+
         prog = generate(req.project, req.layer_ids)
-        return {"filename": prog.filename, "gcode": prog.text, "lines": len(prog.lines),
-                "total_time": prog.total_time, "warnings": prog.warnings}
+        text = prog.text
+        ver = verify(text)
+        m = req.project.machine
+        mandrel = m.mandrel.letter
+        verification = {
+            "moves": ver.moves, "rapids": ver.rapids, "pauses": ver.pauses,
+            "interpreted_time": ver.total_time,
+            "time_matches": abs(ver.total_time - prog.total_time) <= 1e-3 * max(prog.total_time, 1.0),
+            "ranges": {k: list(v) for k, v in ver.ranges.items()},
+            "max_step": ver.max_step,
+            "max_mandrel_step": ver.max_step.get(mandrel, 0.0),
+            "errors": ver.errors[:20],
+        }
+        return {"filename": prog.filename, "gcode": text, "lines": len(prog.lines),
+                "total_time": prog.total_time, "warnings": prog.warnings, "verification": verification}
 
     return _design_errors(run)
 
