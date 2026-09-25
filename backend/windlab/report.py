@@ -128,7 +128,7 @@ def report_html(project: S.Project) -> str:
     b = build(project)
     st, fe = res.structural, res.fe
     lin, req, comp, mach = project.liner, project.requirements, project.composite, project.machine
-    fiber, resin, lmat = get_fiber(comp.fiber), get_resin(comp.resin), get_liner(lin.material)
+    fiber, resin, lmat = get_fiber(comp.fiber, project.materials), get_resin(comp.resin, project.materials), get_liner(lin.material, project.materials)
     now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     n_fail = sum(c.status == "fail" for c in res.checks)
     n_warn = sum(c.status == "warn" for c in res.checks)

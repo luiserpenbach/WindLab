@@ -173,19 +173,30 @@ def catalog() -> dict:
     }
 
 
-def get_fiber(fid: str) -> Fiber:
+def get_fiber(fid: str, lib=None) -> Fiber:
+    for f in getattr(lib, "fibers", None) or []:
+        if f.id == fid:
+            return Fiber(f.id, f.name, f.E, f.strength, f.elongation, f.density, f.tex, f.filaments, f.E2, f.G12,
+                         f.nu12)
     if fid not in FIBERS:
         raise KeyError(f"Unknown fibre '{fid}'")
     return FIBERS[fid]
 
 
-def get_resin(rid: str) -> Resin:
+def get_resin(rid: str, lib=None) -> Resin:
+    for r in getattr(lib, "resins", None) or []:
+        if r.id == rid:
+            return Resin(r.id, r.name, r.E, r.nu, r.density)
     if rid not in RESINS:
         raise KeyError(f"Unknown resin '{rid}'")
     return RESINS[rid]
 
 
-def get_liner(lid: str) -> LinerMaterial:
+def get_liner(lid: str, lib=None) -> LinerMaterial:
+    for m in getattr(lib, "liners", None) or []:
+        if m.id == lid:
+            return LinerMaterial(m.id, m.name, m.E, m.nu, m.yield_, m.ultimate, m.density, m.elongation,
+                                 m.fatigue_coeff, m.fatigue_exp)
     if lid not in LINERS:
         raise KeyError(f"Unknown liner material '{lid}'")
     return LINERS[lid]

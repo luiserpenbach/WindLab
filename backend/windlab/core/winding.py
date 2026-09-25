@@ -154,14 +154,16 @@ def helical_layer_path(
 
 
 def hoop_layer_path(
-    profile: Profile, z_start: float, z_end: float, band_width: float, passes: int, samples_per_rev: int = 72
+    profile: Profile, z_start: float, z_end: float, band_width: float, passes: int, samples_per_rev: int = 72,
+    pitch: Optional[float] = None,
 ) -> PathPoints:
-    """Hoop helix at one band width per revolution, ``passes`` traverses back and forth."""
+    """Hoop helix advancing ``pitch`` (default one band width) per revolution, ``passes`` traverses."""
+    pitch = pitch or band_width
     zs, ps, starts = [], [], []
     lo, hi = z_start + band_width / 2, z_end - band_width / 2
     if hi <= lo:
         hi = lo = 0.5 * (z_start + z_end)
-    revs = max((hi - lo) / band_width, 1e-6)
+    revs = max((hi - lo) / pitch, 1e-6)
     n = max(int(np.ceil(revs * samples_per_rev)), 2)
     phi = 0.0
     for k in range(passes):
@@ -177,5 +179,5 @@ def hoop_layer_path(
         phi += np.pi
     z = np.concatenate(zs)
     r = profile.radius_at(z)
-    alpha = np.full(len(z), np.arctan2(2 * np.pi * float(np.mean(r)), band_width))
+    alpha = np.full(len(z), np.arctan2(2 * np.pi * float(np.mean(r)), pitch))
     return PathPoints(z, r, np.concatenate(ps), starts, alpha, np.zeros(len(z)))

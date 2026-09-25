@@ -51,7 +51,7 @@ def layer_path(b: Build, bl: BuiltLayer) -> PathPoints:
         assert bl.gp is not None and bl.pattern is not None
         p = bl.pattern
         return helical_layer_path(bl.gp, p.n_bands, p.dwell, 2 * bl.gp.advance + 2 * p.dwell, m.samples_per_pass)
-    return hoop_layer_path(bl.base, bl.z_start, bl.z_end, bl.spec.band_width, bl.spec.passes)
+    return hoop_layer_path(bl.base, bl.z_start, bl.z_end, bl.spec.band_width, bl.spec.passes, pitch=bl.pitch)
 
 
 def profile_envelope(prof, xs: np.ndarray) -> np.ndarray:

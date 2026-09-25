@@ -110,9 +110,8 @@ def _interp_idx(arr: np.ndarray, fidx: np.ndarray) -> np.ndarray:
 
 
 def sections(b: Build, fidx_mid: np.ndarray) -> Section:
-    mat = get_liner(b.project.liner.material)
+    mat = get_liner(b.project.liner.material, b.project.materials)
     t_l = b.project.liner.wall_thickness
-    Q11, Q12, Q22, Q66 = b.ply.Q()
     n_el = len(fidx_mid)
     n_lay = len(b.layers)
     zb = np.zeros((n_el, n_lay + 2))
@@ -139,6 +138,7 @@ def sections(b: Build, fidx_mid: np.ndarray) -> Section:
     f = mat.E / (1 - mat.nu**2)
     add(f, f * mat.nu, f, zb[:, 0], zb[:, 1])
     for k in range(n_lay):
+        Q11, Q12, Q22, Q66 = b.layers[k].ply.Q()
         q11, q12, q22 = _qbar(Q11, Q12, Q22, Q66, angles[:, k])
         add(q11, q12, q22, zb[:, k + 1], zb[:, k + 2])
     return Section(ABD, zb, angles, t_l)
@@ -254,12 +254,12 @@ def evaluate(b: Build, meop: float, burst_cyl: float, cycles_cyl: float) -> FEEv
       a local residual stress scaling like the elastic range, life scales as k^(1/b).
     """
     sol = solve(b, meop)
-    mat = get_liner(b.project.liner.material)
+    mat = get_liner(b.project.liner.material, b.project.materials)
     n_lay = len(b.layers)
     ratio = np.full((n_lay, len(sol.z)), np.nan)
     thick = np.diff(sol.section.z_bot, axis=1)[:, 1:]  # layers only
     for k in range(n_lay):
-        e1 = sol.layer_fiber_strain(k) / b.ply.eps1_ult
+        e1 = sol.layer_fiber_strain(k) / b.layers[k].ply.eps1_ult
         ratio[k] = np.where(thick[:, k] > 1e-3, e1, np.nan)
     half = b.project.liner.cyl_length / 2
     lin = b.project.liner

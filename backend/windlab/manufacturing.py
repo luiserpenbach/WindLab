@@ -18,7 +18,7 @@ def _table(headers: list[str], rows: list[list[str]]) -> str:
 def traveller(project: S.Project) -> dict[str, str]:
     res = analyze(project)
     lin, req, comp, mach = project.liner, project.requirements, project.composite, project.machine
-    fiber, resin, lmat = get_fiber(comp.fiber), get_resin(comp.resin), get_liner(lin.material)
+    fiber, resin, lmat = get_fiber(comp.fiber, project.materials), get_resin(comp.resin, project.materials), get_liner(lin.material, project.materials)
     st = res.structural
     today = _dt.date.today().isoformat()
     md: list[str] = [

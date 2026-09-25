@@ -51,6 +51,12 @@ class BuiltLayer:
     z_start: float = 0.0
     z_end: float = 0.0
     warnings: list[str] = field(default_factory=list)
+    ply: Optional[Ply] = None  # this layer's ply properties (fibre override aware)
+    fiber: Optional[Fiber] = None
+
+    @property
+    def pitch(self) -> float:
+        return self.spec.band_width * (1.0 - self.spec.overlap)
 
     @property
     def circuits(self) -> int:
@@ -65,9 +71,9 @@ class BuiltLayer:
             per_circuit = 2 * self.gp.length + 2 * self.pattern.dwell * self.gp.r0
             return self.pattern.n_bands * per_circuit
         length = self.z_end - self.z_start - self.spec.band_width
-        revs = max(length, 0.0) / self.spec.band_width
+        revs = max(length, 0.0) / self.pitch
         rev_len = 2 * math.pi * self.R_mid
-        return self.spec.passes * (revs * math.hypot(rev_len, self.spec.band_width) + 0.5 * rev_len)
+        return self.spec.passes * (revs * math.hypot(rev_len, self.pitch) + 0.5 * rev_len)
 
 
 @dataclass
@@ -93,15 +99,20 @@ def build(project: S.Project) -> Build:
     except GeometryError as e:
         raise DesignError(str(e)) from e
     comp = project.composite
-    fiber = get_fiber(comp.fiber)
-    ply = ply_properties(fiber, get_resin(comp.resin), comp.fiber_volume_fraction, comp.translation_efficiency)
+    lib = project.materials
+    fiber = get_fiber(comp.fiber, lib)
+    resin = get_resin(comp.resin, lib)
+    ply = ply_properties(fiber, resin, comp.fiber_volume_fraction, comp.translation_efficiency)
     half = lin.cyl_length / 2.0
 
     layers: list[BuiltLayer] = []
     path_errors: dict[str, str] = {}
     surf = outer
     for i, L in enumerate(project.layers):
-        t_b = band_thickness(fiber, L.tows, L.band_width, comp.fiber_volume_fraction)
+        fiber_L = get_fiber(L.fiber, lib) if L.fiber else fiber
+        ply_L = ply if fiber_L is fiber else ply_properties(fiber_L, resin, comp.fiber_volume_fraction,
+                                                            comp.translation_efficiency)
+        t_b = band_thickness(fiber_L, L.tows, L.band_width, comp.fiber_volume_fraction)
         R_mid = float(surf.radius_at(0.0))
         warnings: list[str] = []
         if L.type == "helical":
@@ -157,13 +168,14 @@ def build(project: S.Project) -> Build:
             z_s, z_e = -half + L.end_offset_a, half - L.end_offset_b
             if z_e - z_s < 2 * L.band_width:
                 raise DesignError(f"Layer {i + 1}: hoop length is shorter than two band widths")
-            t_h = L.thickness_override or L.passes * t_b
+            t_h = L.thickness_override or L.passes * t_b / (1.0 - L.overlap)
             n = surf.normals()
             edge = np.minimum(surf.z - z_s, z_e - surf.z)
             t = t_h * np.clip(0.5 + edge / L.band_width, 0.0, 1.0) * (np.abs(n[:, 1]) > 0.9)
-            angle = math.atan2(2 * math.pi * R_mid, L.band_width)
+            angle = math.atan2(2 * math.pi * R_mid, L.band_width * (1.0 - L.overlap))
             bl = BuiltLayer(L, i, surf, clean_offset(surf.offset(t), half), t, t_h, t_b, angle, R_mid, z_start=z_s, z_end=z_e,
                             warnings=warnings)
+        bl.ply, bl.fiber = ply_L, fiber_L
         layers.append(bl)
         surf = bl.top
     return Build(project, outer, inner, fiber, ply, layers, path_errors=path_errors)
@@ -172,10 +184,10 @@ def build(project: S.Project) -> Build:
 # --------------------------------------------------------------------------- structural
 def _vessel(b: Build) -> Vessel:
     lin = b.project.liner
-    mat = get_liner(lin.material)
+    mat = get_liner(lin.material, b.project.materials)
     liner = Liner(mat, lin.wall_thickness, lin.radius - lin.wall_thickness / 2)
     groups = [
-        PlyGroup(bl.spec.type, bl.angle, bl.t_cyl, bl.R_mid + bl.t_cyl / 2, b.ply)
+        PlyGroup(bl.spec.type, bl.angle, bl.t_cyl, bl.R_mid + bl.t_cyl / 2, bl.ply)
         for bl in b.layers
     ]
     return Vessel(liner, groups, lin.radius - lin.wall_thickness)
@@ -213,7 +225,7 @@ def _load_point(v: Vessel, phase: str, st) -> S.LoadPoint:
 
 def netting_thickness(b: Build, p: float) -> tuple[float, float]:
     lin = b.project.liner
-    mat = get_liner(lin.material)
+    mat = get_liner(lin.material, b.project.materials)
     Ri = lin.radius - lin.wall_thickness
     X = b.ply.E1 * b.ply.eps1_ult
     hel = [bl for bl in b.layers if bl.spec.type == "helical"]
@@ -272,7 +284,7 @@ def structural(b: Build) -> tuple[S.StructuralResult, dict]:
     meop_state = hist[i_meop].state
     pb, mode, _ = burst(v, hist[-1].state, pb_est)
     ratios = v.fiber_ratio(meop_state.eps)
-    mat = get_liner(b.project.liner.material)
+    mat = get_liner(b.project.liner.material, b.project.materials)
     cycles = liner_fatigue_cycles(mat, hist[-1].state.liner_sigma, meop_state.liner_sigma)
     t_hoop, t_hel = netting_thickness(b, p_req)
     dz, ds = dome_netting_stress(b, req.meop)
@@ -326,13 +338,13 @@ def _dome_max(b: Build, z: np.ndarray, s: np.ndarray) -> float:
 # --------------------------------------------------------------------------- mass & checks
 def mass(b: Build, p_burst: float) -> S.MassResult:
     lin = b.project.liner
-    mat = get_liner(lin.material)
+    mat = get_liner(lin.material, b.project.materials)
     liner_g = (b.liner_outer.volume() - b.liner_inner.volume()) * mat.density / 1000.0
-    comp_vol = sum(bl.base.shell_volume(bl.thickness) for bl in b.layers)  # mm3
     Vf = b.project.composite.fiber_volume_fraction
-    resin = get_resin(b.project.composite.resin)
-    fiber_g = comp_vol * Vf * b.fiber.density / 1000.0
-    resin_g = comp_vol * (1 - Vf) * resin.density / 1000.0
+    resin = get_resin(b.project.composite.resin, b.project.materials)
+    vols = [(bl.base.shell_volume(bl.thickness), bl.fiber or b.fiber) for bl in b.layers]  # mm3
+    fiber_g = sum(v * Vf * f.density for v, f in vols) / 1000.0
+    resin_g = sum(v for v, _ in vols) * (1 - Vf) * resin.density / 1000.0
     total = liner_g + fiber_g + resin_g
     vol_l = b.liner_inner.volume() / 1e6
     pvw = p_burst * 1e6 * vol_l * 1e-3 / (total / 1000.0 * 9.80665) / 1000.0 if total > 0 else 0.0
@@ -515,10 +527,11 @@ def _pattern_out(p: pat.Pattern) -> S.PatternCandidate:
 
 def layer_result(b: Build, bl: BuiltLayer) -> S.LayerResult:
     comp = b.project.composite
-    resin = get_resin(comp.resin)
+    resin = get_resin(comp.resin, b.project.materials)
     L_mm = bl.fiber_path_length()
-    fiber_g = L_mm / 1e6 * bl.spec.tows * b.fiber.tex
-    resin_g = fiber_g / b.fiber.density * (1 - comp.fiber_volume_fraction) / comp.fiber_volume_fraction * resin.density
+    fb = bl.fiber or b.fiber
+    fiber_g = L_mm / 1e6 * bl.spec.tows * fb.tex
+    resin_g = fiber_g / fb.density * (1 - comp.fiber_volume_fraction) / comp.fiber_volume_fraction * resin.density
     speed = b.project.machine.fiber_speed
     kn_min, bridge = normal_curvature(bl)
     ten = b.tension.get(bl.index) if b.tension else None
@@ -565,7 +578,7 @@ def suggest_layup(project: S.Project, max_iter: int = 60) -> tuple[list[S.Layer]
     tmpl_hoop = next((L for L in project.layers if L.type == "hoop"), None)
     hel_t = tmpl_hel or S.Layer(id="h", type="helical", tows=1, band_width=6.0, tension=25.0)
     hoop_t = tmpl_hoop or S.Layer(id="c", type="hoop", tows=1, band_width=6.0, tension=35.0)
-    fiber = get_fiber(project.composite.fiber)
+    fiber = get_fiber(project.composite.fiber, project.materials)
     Vf = project.composite.fiber_volume_fraction
     t_b_hel = band_thickness(fiber, hel_t.tows, hel_t.band_width, Vf)
     t_b_hoop = band_thickness(fiber, hoop_t.tows, hoop_t.band_width, Vf)

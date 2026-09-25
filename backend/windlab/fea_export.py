@@ -46,7 +46,7 @@ def export(project: S.Project, p_af: float | None = None) -> dict[str, str]:
     p_af = p_af or st.autofrettage_pressure
     req = project.requirements
     lin = project.liner
-    mat = get_liner(lin.material)
+    mat = get_liner(lin.material, project.materials)
     prof = b.liner_outer
     fidx = shellfe._mesh(b)
     zn = shellfe._interp_idx(prof.z, fidx)
@@ -55,7 +55,6 @@ def export(project: S.Project, p_af: float | None = None) -> dict[str, str]:
     fmid = 0.5 * (fidx[1:] + fidx[:-1])
     sec = shellfe.sections(b, fmid)
     n = len(zn)
-    Q = b.ply.Q()
 
     mats: dict[str, tuple] = {}
     out = io.StringIO()
@@ -83,8 +82,9 @@ def export(project: S.Project, p_af: float | None = None) -> dict[str, str]:
             if t < 1e-4:
                 continue
             a = round(math.degrees(sec.angles[e, k]) / ANGLE_BIN) * ANGLE_BIN
-            name = f"PLY_A{a:06.2f}".replace(".", "P")
-            mats[name] = _lamina(Q, a)
+            fid = "".join(ch if ch.isalnum() else "_" for ch in L.fiber.id).upper()
+            name = f"{fid}_A{a:06.2f}".replace(".", "P")
+            mats[name] = _lamina(L.ply.Q(), a) + (L.ply.G12,)
             plies.append((t, name, 0.0))
         total = sum(p[0] for p in plies)
         # reference surface = liner outer surface (z = 0); mid-surface at (t_comp - t_liner) / 2
@@ -101,8 +101,7 @@ def export(project: S.Project, p_af: float | None = None) -> dict[str, str]:
     w(f"{mat.E:g}, {mat.nu:g}\n*PLASTIC\n")
     eps_u = max(mat.elongation - mat.yield_ / mat.E, 1e-3)
     w(f"{mat.yield_:g}, 0.\n{mat.yield_ + mat.hardening * eps_u:g}, {eps_u:.5f}\n")
-    G13 = b.ply.G12
-    for name, (E1, E2, nu12, G) in sorted(mats.items()):
+    for name, (E1, E2, nu12, G, G13) in sorted(mats.items()):
         w(f"*MATERIAL, NAME={name}\n*ELASTIC, TYPE=LAMINA\n")
         w(f"{E1:.1f}, {E2:.1f}, {nu12:.5f}, {G:.1f}, {G13:.1f}, {G13:.1f}\n")
     last = n

@@ -36,12 +36,13 @@ class TensionResult:
 
 def _stack(b: Build):
     lin = b.project.liner
-    mat = get_liner(lin.material)
-    Q11, Q12, Q22, Q66 = b.ply.Q()
+    mat = get_liner(lin.material, b.project.materials)
     a = np.array([bl.angle for bl in b.layers])
     t = np.array([bl.t_cyl for bl in b.layers])
     R = np.array([bl.R_mid + 0.5 * bl.t_cyl for bl in b.layers])
     c, s = np.cos(a), np.sin(a)
+    Q = np.array([bl.ply.Q() for bl in b.layers]).reshape(-1, 4)
+    Q11, Q12, Q22, Q66 = Q[:, 0], Q[:, 1], Q[:, 2], Q[:, 3]
     E_theta = Q11 * s**4 + 2 * (Q12 + 2 * Q66) * s**2 * c**2 + Q22 * c**4
     area = np.array([bl.spec.band_width * bl.t_band for bl in b.layers])  # ply area of one band [mm2]
     liner_k = mat.E / (1 - mat.nu**2) * lin.wall_thickness
@@ -55,12 +56,12 @@ def analyse(b: Build, tensions: np.ndarray | None = None) -> TensionResult:
     n = len(sw)
     res = sw.copy()
     liner = 0.0
-    E1 = b.ply.E1
+    E1 = np.array([bl.ply.E1 for bl in b.layers])
     for k in range(n):
         S_k = liner_k + float(np.sum(E_theta[:k] * t[:k]))
         q = sw[k] * t[k] * math.sin(a[k]) ** 2 / R[k]
         d_eps = -q * R[k] / S_k
-        res[:k] += E1 * np.sin(a[:k]) ** 2 * d_eps
+        res[:k] += E1[:k] * np.sin(a[:k]) ** 2 * d_eps
         liner += mat.E / (1 - mat.nu**2) * d_eps
     loss = np.where(sw > 0, 1.0 - res / np.maximum(sw, 1e-12), 0.0)
     return TensionResult([bl.spec.id for bl in b.layers], sw, res, loss, liner, T)
@@ -79,9 +80,9 @@ def schedule(b: Build, target_tension: float | None = None, max_factor: float = 
     T_out = b.layers[-1].spec.tension if target_tension is None else target_tension
     target = T_out / area[-1]
     S = np.array([liner_k + float(np.sum(E_theta[:k] * t[:k])) for k in range(n)])
-    E1 = b.ply.E1
+    E1 = np.array([bl.ply.E1 for bl in b.layers])
     sw = np.zeros(n)
     for j in range(n - 1, -1, -1):
         later = sum(sw[k] * t[k] * math.sin(a[k]) ** 2 / S[k] for k in range(j + 1, n))
-        sw[j] = min(target + E1 * math.sin(a[j]) ** 2 * later, max_factor * target)
+        sw[j] = min(target + E1[j] * math.sin(a[j]) ** 2 * later, max_factor * target)
     return sw * area

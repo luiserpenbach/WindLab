@@ -53,6 +53,51 @@ class Requirements(BaseModel):
     fatigue_scatter_factor: float = Field(4.0, ge=1, description="Liner fatigue life scatter factor")
 
 
+class CustomFiber(BaseModel):
+    id: str
+    name: str
+    E: float = Field(..., gt=0, description="Axial tensile modulus [MPa]")
+    strength: float = Field(..., gt=0, description="Impregnated strand tensile strength [MPa]")
+    elongation: float = Field(0.02, gt=0)
+    density: float = Field(..., gt=0, description="[g/cm3]")
+    tex: float = Field(..., gt=0, description="Linear density [g/km]")
+    filaments: str = ""
+    E2: float = Field(15_000.0, gt=0, description="Transverse fibre modulus [MPa]")
+    G12: float = Field(27_000.0, gt=0, description="Fibre shear modulus [MPa]")
+    nu12: float = 0.2
+
+
+class CustomResin(BaseModel):
+    id: str
+    name: str
+    E: float = Field(..., gt=0)
+    nu: float = 0.35
+    density: float = Field(..., gt=0)
+
+
+class CustomLiner(BaseModel):
+    id: str
+    name: str
+    E: float = Field(..., gt=0)
+    nu: float = 0.33
+    yield_: float = Field(..., gt=0, alias="yield")
+    ultimate: float = Field(..., gt=0)
+    density: float = Field(..., gt=0)
+    elongation: float = Field(0.1, gt=0)
+    fatigue_coeff: float = Field(..., gt=0, description="Basquin sigma'_f [MPa]")
+    fatigue_exp: float = Field(..., lt=0, description="Basquin exponent b")
+
+    model_config = {"populate_by_name": True}
+
+
+class MaterialLibrary(BaseModel):
+    """Project-specific materials; they take precedence over the built-in database."""
+
+    fibers: list[CustomFiber] = []
+    resins: list[CustomResin] = []
+    liners: list[CustomLiner] = []
+
+
 class CompositeSpec(BaseModel):
     fiber: str = Field("T700S-12K", description="Fibre id (see /api/materials)")
     resin: str = Field("Epoxy-DGEBA", description="Resin id (see /api/materials)")
@@ -101,6 +146,8 @@ class Layer(BaseModel):
     band_shape: Literal["rectangular", "lenticular", "elliptical"] = Field(
         "rectangular", description="Band cross-section used by the band-level thickness simulation"
     )
+    fiber: Optional[str] = Field(None, description="Fibre override for this layer (e.g. a glass outer layer)")
+    overlap: float = Field(0.0, ge=0, le=0.9, description="Hoop: band overlap fraction (pitch = band x (1 - overlap))")
 
 
 class MachineAxis(BaseModel):
@@ -145,6 +192,7 @@ class Project(BaseModel):
     liner: LinerSpec = LinerSpec()
     requirements: Requirements = Requirements()
     composite: CompositeSpec = CompositeSpec()
+    materials: MaterialLibrary = MaterialLibrary()
     layers: list[Layer] = []
     machine: MachineSpec = MachineSpec()
 
