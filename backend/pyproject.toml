@@ -27,3 +27,6 @@ include = ["windlab*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.setuptools.package-data]
+windlab = ["data/examples/*.json"]

@@ -93,7 +93,8 @@ def traveller(project: S.Project) -> dict[str, str]:
         "",
         "## Cure",
         "",
-        "- [ ] Rotating cure per resin datasheet: ramp ______ °C/min to ______ °C, hold ______ h",
+        f"- [ ] Rotating cure: {resin.cure or 'per resin datasheet'} (design stress-free temperature "
+        f"{comp.cure_temperature:g} °C). Actual: ramp ______ °C/min to ______ °C, hold ______ h",
         "- [ ] Cure log attached; post-cure visual inspection (dry spots, wrinkles, bridging at the domes)",
         "- [ ] Mass after cure: ______ g (predicted " + f"{res.mass.total:.0f} g)",
         "",

@@ -45,6 +45,8 @@ class Resin:
     nu: float
     density: float
     cte: float = 60e-6
+    cure: str = ""  # typical cure schedule (datasheet), for the traveller
+    cure_temperature: float = 120.0  # typical stress-free (final cure) temperature [degC]
 
     @property
     def G(self) -> float:
@@ -98,9 +100,12 @@ FIBERS: dict[str, Fiber] = {
 RESINS: dict[str, Resin] = {
     r.id: r
     for r in [
-        Resin("Epoxy-DGEBA", "Epoxy DGEBA / anhydride (wet winding)", 3100, 0.35, 1.20),
-        Resin("Epoxy-toughened", "Toughened epoxy (towpreg)", 2900, 0.36, 1.18),
-        Resin("Epoxy-HT", "High-Tg epoxy / amine", 3400, 0.34, 1.22),
+        Resin("Epoxy-DGEBA", "Epoxy DGEBA / anhydride (wet winding)", 3100, 0.35, 1.20, 60e-6,
+              "2 h at 90 degC + 4 h at 130 degC, rotating; ramp <= 2 K/min", 130.0),
+        Resin("Epoxy-toughened", "Toughened epoxy (towpreg)", 2900, 0.36, 1.18, 60e-6,
+              "2 h at 120 degC, rotating; ramp <= 2 K/min", 120.0),
+        Resin("Epoxy-HT", "High-Tg epoxy / amine", 3400, 0.34, 1.22, 55e-6,
+              "2 h at 80 degC + 2 h at 150 degC + 2 h at 180 degC post-cure", 180.0),
     ]
 }
 

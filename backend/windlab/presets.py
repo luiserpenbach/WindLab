@@ -1,7 +1,9 @@
 """Machine presets and example projects."""
 from __future__ import annotations
 
+import json
 from functools import lru_cache
+from pathlib import Path
 
 from . import schemas as S
 
@@ -115,12 +117,47 @@ def _examples_raw() -> list[tuple[str, str, S.Project]]:
     ]
 
 
-@lru_cache(maxsize=1)
-def examples() -> list[dict]:
+EXAMPLES_DIR = Path(__file__).parent / "data" / "examples"
+
+
+def generate_examples(write: bool = True) -> list[dict]:
+    """Size the example layups (slow) and optionally write them to windlab/data/examples."""
     from .core.design import suggest_layup
 
     out = []
     for eid, label, prj in _examples_raw():
         layers, _ = suggest_layup(prj)
+        project = prj.model_copy(update={"layers": layers})
+        out.append({"id": eid, "label": label, "project": project})
+        if write:
+            EXAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+            (EXAMPLES_DIR / f"{eid}.json").write_text(
+                json.dumps({"id": eid, "label": label, "project": project.model_dump(mode="json", by_alias=True)},
+                           indent=1))
+    return out
+
+
+@lru_cache(maxsize=1)
+def examples() -> list[dict]:
+    """Example projects: pre-sized JSON shipped with the package (regenerate with
+    ``python -m windlab.presets``), sized on the fly if a file is missing or outdated."""
+    out = []
+    for eid, label, prj in _examples_raw():
+        f = EXAMPLES_DIR / f"{eid}.json"
+        try:
+            data = json.loads(f.read_text())
+            project = S.Project.model_validate(data["project"])
+            out.append({"id": eid, "label": label, "project": project})
+            continue
+        except (OSError, ValueError, KeyError):
+            pass
+        from .core.design import suggest_layup
+
+        layers, _ = suggest_layup(prj)
         out.append({"id": eid, "label": label, "project": prj.model_copy(update={"layers": layers})})
     return out
+
+
+if __name__ == "__main__":
+    for e in generate_examples():
+        print(f"{e['id']}: {len(e['project'].layers)} layers")
