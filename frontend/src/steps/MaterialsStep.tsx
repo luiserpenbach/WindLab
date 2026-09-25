@@ -249,11 +249,7 @@ export function MaterialsPanel() {
           options={matOptions(lists.fibers)}
           onChange={(v) => set({ fiber: v }, 'fiber')}
         />
-        {fiberE ? (
-          <FiberCard e={fiberE} />
-        ) : (
-          <Empty>{lists.loaded ? 'Unknown fibre id' : 'Loading materials…'}</Empty>
-        )}
+        {fiberE ? <FiberCard e={fiberE} /> : <Empty>{lists.loaded ? 'Unknown fibre id' : 'Loading materials…'}</Empty>}
         {overrides.length ? (
           <p className="muted small">
             Layer fibre override{overrides.length > 1 ? 's' : ''}:{' '}
@@ -313,7 +309,9 @@ export function MaterialsPanel() {
                     <button
                       type="button"
                       className="link-btn"
-                      onClick={() => set({ cure_temperature: resin.cure_temperature ?? c.cure_temperature }, 'cureResin')}
+                      onClick={() =>
+                        set({ cure_temperature: resin.cure_temperature ?? c.cure_temperature }, 'cureResin')
+                      }
                       title="Set the stress-free temperature to the resin's final cure temperature (Ctrl+Z undoes)"
                     >
                       use {sig(resin.cure_temperature, 4)} °C
@@ -527,7 +525,11 @@ function LibraryTable({ kind }: { kind: MatKind }) {
   const allIds = new Set([...takenIds, ...entries.map((e) => e.rec.id)]);
 
   const openNew = () =>
-    editorStore.set({ kind, originalId: null, draft: meta.fresh(uniqueId(`custom-${meta.one.split(' ')[0]}`, allIds)) });
+    editorStore.set({
+      kind,
+      originalId: null,
+      draft: meta.fresh(uniqueId(`custom-${meta.one.split(' ')[0]}`, allIds)),
+    });
   const duplicate = (e: MatEntry<Rec & { id: string; name: string }>) =>
     editorStore.set({
       kind,
@@ -566,8 +568,9 @@ function LibraryTable({ kind }: { kind: MatKind }) {
         <table className="data-table lib-table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Id</th>
+              <th>
+                Name <span className="th-unit">/ id</span>
+              </th>
               {meta.fields.map((f) => (
                 <th key={f.key} className="num" title={`${f.label}${f.unit ? ` [${f.unit}]` : ''}`}>
                   {f.short}
@@ -585,21 +588,23 @@ function LibraryTable({ kind }: { kind: MatKind }) {
               const dangling = e.custom && u.length > 0 && !builtinIds.has(e.rec.id);
               return (
                 <tr key={`${e.custom ? 'c' : 'b'}-${e.rec.id}`} className={e.shadowed ? 'shadowed' : ''}>
-                  <td className="lib-name">
-                    <span>{e.rec.name}</span>
-                    {e.custom ? <span className="type-badge t-custom">custom</span> : null}
-                    {e.shadowed ? (
-                      <span className="type-badge t-muted" title="A custom record with this id takes precedence">
-                        overridden
-                      </span>
-                    ) : null}
-                    {u.length ? (
-                      <span className="type-badge t-use" title={`Used by: ${u.join(', ')}`}>
-                        in use
-                      </span>
-                    ) : null}
+                  <td>
+                    <div className="lib-name">
+                      <span>{e.rec.name}</span>
+                      {e.custom ? <span className="type-badge t-custom">custom</span> : null}
+                      {e.shadowed ? (
+                        <span className="type-badge t-muted" title="A custom record with this id takes precedence">
+                          overridden
+                        </span>
+                      ) : null}
+                      {u.length ? (
+                        <span className="type-badge t-use" title={`Used by: ${u.join(', ')}`}>
+                          in use
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="muted mono-id">{e.rec.id}</div>
                   </td>
-                  <td className="muted mono-id">{e.rec.id}</td>
                   {meta.fields.map((f) => (
                     <td key={f.key} className="num">
                       {disp(e.rec[f.key], f)}

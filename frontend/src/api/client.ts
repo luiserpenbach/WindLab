@@ -1,6 +1,7 @@
 import type {
   AnalysisResult,
   CalibrationResult,
+  CcxExportResponse,
   FeaExportResponse,
   OptimiseResult,
   ReportResponse,
@@ -138,6 +139,7 @@ export const api = {
   calibrate: (p: Project, s?: AbortSignal) => request<CalibrationResult>('POST', '/calibrate', p, s),
   report: (p: Project, s?: AbortSignal) => request<ReportResponse>('POST', '/report', p, s),
   feaExport: (p: Project, s?: AbortSignal) => request<FeaExportResponse>('POST', '/fea-export', p, s),
+  ccxExport: (p: Project, s?: AbortSignal) => request<CcxExportResponse>('POST', '/ccx-export', p, s),
   listProjects: (s?: AbortSignal) => request<ProjectListEntry[]>('GET', '/projects', undefined, s),
   getProject: (name: string, s?: AbortSignal) => request<Project>('GET', `/projects/${enc(name)}`, undefined, s),
   saveProject: (name: string, p: Project) => request<OkResponse>('PUT', `/projects/${enc(name)}`, p),

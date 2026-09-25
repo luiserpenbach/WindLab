@@ -274,7 +274,9 @@ export function normalizeTests(raw: unknown): TestRecord[] {
         ? (r.failure_location as FailureLocation)
         : 'cylinder',
       volumetric_expansion_total: finite(r.volumetric_expansion_total) ? r.volumetric_expansion_total : null,
-      volumetric_expansion_permanent: finite(r.volumetric_expansion_permanent) ? r.volumetric_expansion_permanent : null,
+      volumetric_expansion_permanent: finite(r.volumetric_expansion_permanent)
+        ? r.volumetric_expansion_permanent
+        : null,
       date: typeof r.date === 'string' ? r.date : '',
       notes: typeof r.notes === 'string' ? r.notes : '',
     });

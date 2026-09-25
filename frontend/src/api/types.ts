@@ -737,6 +737,17 @@ export interface ReportResponse {
   html: string;
 }
 
+/** CalculiX axisymmetric solid deck (POST /api/ccx-export). */
+export interface CcxExportResponse {
+  filename: string;
+  inp: string;
+  elements: number;
+  nodes: number;
+  materials: number;
+  /** Analysis step names in order */
+  steps: string[];
+}
+
 export interface FeaExportResponse {
   filename: string;
   /** Abaqus input deck */

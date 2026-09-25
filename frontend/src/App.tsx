@@ -19,7 +19,7 @@ export function App() {
   // A loaded / new project invalidates the thickness map (it is not recomputed on edits).
   useEffect(() => setThk(null), [revision, setThk]);
 
-  // Alt+1..8 switches workflow steps.
+  // Alt+1..9 switches workflow steps.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.altKey || e.ctrlKey || e.metaKey) return;

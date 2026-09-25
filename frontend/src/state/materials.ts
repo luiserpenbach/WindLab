@@ -63,7 +63,10 @@ export function useMaterialLists(): MaterialLists {
 }
 
 /** The effective record for an id (custom first). */
-export function findMat<T extends { id: string }>(list: MatEntry<T>[], id: string | null | undefined): MatEntry<T> | null {
+export function findMat<T extends { id: string }>(
+  list: MatEntry<T>[],
+  id: string | null | undefined,
+): MatEntry<T> | null {
   if (!id) return null;
   return list.find((e) => e.rec.id === id && !e.shadowed) ?? null;
 }

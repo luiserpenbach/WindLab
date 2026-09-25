@@ -3,15 +3,7 @@ import type { PathResult, SimulationResult, ThicknessMapResult } from '../api/ty
 import type { PathColorMode } from '../viewer/colormaps';
 
 export type StepId =
-  | 'vessel'
-  | 'materials'
-  | 'layup'
-  | 'thickness'
-  | 'analysis'
-  | 'testing'
-  | 'machine'
-  | 'simulate'
-  | 'export';
+  'vessel' | 'materials' | 'layup' | 'thickness' | 'analysis' | 'testing' | 'machine' | 'simulate' | 'export';
 
 export const STEPS: { id: StepId; n: number; label: string }[] = [
   { id: 'vessel', n: 1, label: 'Vessel' },

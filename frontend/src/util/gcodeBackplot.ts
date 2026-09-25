@@ -119,6 +119,8 @@ export class BackplotParser {
   private idx: Map<string, number>;
   private pos: Float64Array;
   private off: Float64Array;
+  /** Move index at which each axis was first programmed (-1 = not yet): earlier samples are unknown. */
+  private firstMove: Int32Array;
   private mode93 = false;
   private motion = -1;
   private line = 0;
@@ -143,6 +145,7 @@ export class BackplotParser {
     this.idx = new Map(opts.axes.map((a, i) => [a.letter.toUpperCase(), i]));
     this.pos = new Float64Array(opts.axes.length);
     this.off = new Float64Array(opts.axes.length);
+    this.firstMove = new Int32Array(opts.axes.length).fill(-1);
     this.ys = opts.axes.map(() => new Grow());
   }
 
@@ -233,6 +236,7 @@ export class BackplotParser {
         const phys = this.pos[k] + this.off[k];
         this.off[k] = phys - words[L];
         this.pos[k] = words[L];
+        if (this.firstMove[k] < 0) this.firstMove[k] = this.xs.n;
       }
       this.resets++;
       return;
@@ -252,6 +256,7 @@ export class BackplotParser {
       const d = words[L] - this.pos[k];
       this.pos[k] = words[L];
       moved = true;
+      if (this.firstMove[k] < 0) this.firstMove[k] = this.xs.n;
       const ax = this.opts.axes[k];
       if (ax.rotary && this.opts.controller === 'linuxcnc') dRot2 += d * d;
       else dLin2 += d * d;
@@ -284,7 +289,11 @@ export class BackplotParser {
     const xs = this.xs.view();
     const ts = this.ts.view();
     const series: BackplotSeries[] = this.opts.axes.map((a, k) => {
-      const y = this.ys[k].view();
+      // samples before the axis was first programmed are unknown (the controller position is not in the file)
+      const i0 = this.firstMove[k] < 0 ? this.xs.n : this.firstMove[k];
+      const y = this.ys[k].view().subarray(i0);
+      const xk = xs.subarray(i0);
+      const tk = ts.subarray(i0);
       let min = Infinity;
       let max = -Infinity;
       for (let i = 0; i < y.length; i++) {
@@ -294,8 +303,8 @@ export class BackplotParser {
       return {
         letter: a.letter,
         role: a.role,
-        byLine: envelope(xs, y, buckets),
-        byTime: envelope(ts, y, buckets),
+        byLine: envelope(xk, y, buckets),
+        byTime: envelope(tk, y, buckets),
         min: Number.isFinite(min) ? min : 0,
         max: Number.isFinite(max) ? max : 0,
       };

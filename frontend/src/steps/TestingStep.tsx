@@ -121,13 +121,7 @@ export function TestingPanel() {
 
   return (
     <>
-      <Section
-        title={
-          <>
-            Calibration {cal.busy ? <Spinner size={10} label="Calibrating" /> : null}
-          </>
-        }
-      >
+      <Section title={<>Calibration {cal.busy ? <Spinner size={10} label="Calibrating" /> : null}</>}>
         {!project.tests.length ? (
           <Empty>Add test records below (or paste them from a spreadsheet) to correlate the model with tests.</Empty>
         ) : null}
@@ -197,10 +191,14 @@ export function TestingPanel() {
               </Button>
             </div>
             {r.suggested_efficiency != null && !sug.ok ? (
-              <Banner kind="warn">Suggested efficiency {sig(r.suggested_efficiency, 3)}: {sug.why}.</Banner>
+              <Banner kind="warn">
+                Suggested efficiency {sig(r.suggested_efficiency, 3)}: {sug.why}.
+              </Banner>
             ) : null}
             {r.b_basis_efficiency != null && !bb.ok ? (
-              <Banner kind="warn">B-basis efficiency {sig(r.b_basis_efficiency, 3)}: {bb.why}.</Banner>
+              <Banner kind="warn">
+                B-basis efficiency {sig(r.b_basis_efficiency, 3)}: {bb.why}.
+              </Banner>
             ) : null}
             {stale ? <p className="muted small">Updating for the changed project…</p> : null}
             <BurstChart r={r} />
@@ -247,9 +245,37 @@ function BurstChart({ r }: { r: CalibrationResult }) {
     const cyl = rows.filter((t) => loc.get(t.id) === 'cylinder');
     const other = rows.filter((t) => loc.get(t.id) !== 'cylinder');
     const series: Series[] = [
-      { id: 'eq', name: 'measured = predicted', x: d, y: d, color: 'var(--axis)', dash: '5 4', width: 1.5, noHover: true },
-      { id: 'p10', name: '±10 %', x: d, y: d.map((v) => v * 1.1), color: 'var(--grid)', dash: '2 3', width: 1, noHover: true },
-      { id: 'm10', name: '−10 %', x: d, y: d.map((v) => v * 0.9), color: 'var(--grid)', dash: '2 3', width: 1, noHover: true, hideLegend: true },
+      {
+        id: 'eq',
+        name: 'measured = predicted',
+        x: d,
+        y: d,
+        color: 'var(--axis)',
+        dash: '5 4',
+        width: 1.5,
+        noHover: true,
+      },
+      {
+        id: 'p10',
+        name: '±10 %',
+        x: d,
+        y: d.map((v) => v * 1.1),
+        color: 'var(--border-strong)',
+        dash: '2 3',
+        width: 1,
+        noHover: true,
+      },
+      {
+        id: 'm10',
+        name: '−10 %',
+        x: d,
+        y: d.map((v) => v * 0.9),
+        color: 'var(--border-strong)',
+        dash: '2 3',
+        width: 1,
+        noHover: true,
+        hideLegend: true,
+      },
       {
         id: 'cyl',
         name: 'cylinder bursts',
@@ -307,7 +333,14 @@ function BurstChart({ r }: { r: CalibrationResult }) {
       <BarChart
         categories={rows.map((t) => `${t.id}${t.serial ? ` (${t.serial})` : ''}`)}
         tickLabels={rows.map((t) => t.id)}
-        series={[{ id: 'ratio', name: 'measured / predicted', values: rows.map((t) => t.ratio ?? NaN), color: 'var(--series-1)' }]}
+        series={[
+          {
+            id: 'ratio',
+            name: 'measured / predicted',
+            values: rows.map((t) => t.ratio ?? NaN),
+            color: 'var(--series-1)',
+          },
+        ]}
         hline={{ value: 1 }}
         yLabel="ratio"
         xLabel="Test"
@@ -360,7 +393,12 @@ export function TestingBottom() {
         <Button size="sm" icon="plus" onClick={add}>
           Add test
         </Button>
-        <Button size="sm" icon="upload" onClick={() => setPaste(true)} title="Paste rows copied from a spreadsheet or CSV">
+        <Button
+          size="sm"
+          icon="upload"
+          onClick={() => setPaste(true)}
+          title="Paste rows copied from a spreadsheet or CSV"
+        >
           Paste CSV…
         </Button>
         <span style={{ flex: 1 }} />
@@ -382,6 +420,15 @@ export function TestingBottom() {
                   p MPa
                 </th>
                 <th>Failure</th>
+                <th className="num calc" title="Model prediction for this test [MPa]">
+                  Pred. MPa
+                </th>
+                <th className="num calc" title="Measured / predicted">
+                  Ratio
+                </th>
+                <th className="calc" title="Failure location matches the predicted critical location">
+                  Loc.
+                </th>
                 <th className="num" title="Cycles to failure or run-out (cycle tests)">
                   Cycles
                 </th>
@@ -391,19 +438,12 @@ export function TestingBottom() {
                 <th className="num" title="Permanent volumetric expansion after venting [mL]">
                   ΔV perm mL
                 </th>
-                <th>Date</th>
-                <th>Notes</th>
-                <th className="num sep-left" title="Model prediction for this test [MPa]">
-                  Pred. MPa
-                </th>
-                <th className="num" title="Measured / predicted">
-                  Ratio
-                </th>
-                <th title="Failure location matches the predicted critical location">Loc.</th>
-                <th className="num" title="Measured / predicted total volumetric expansion">
+                <th className="num calc" title="Measured / predicted total volumetric expansion">
                   ΔV ratio
                 </th>
-                <th>
+                <th>Date</th>
+                <th>Notes</th>
+                <th className="sticky-act">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
@@ -459,6 +499,23 @@ export function TestingBottom() {
                         onChange={(v) => set(t.id, { failure_location: v }, 'loc')}
                       />
                     </td>
+                    <td className="num calc">{c?.predicted != null ? sig(c.predicted, 4) : '–'}</td>
+                    <td className={`num calc ${c?.ratio != null ? (c.ratio < 1 ? 'bad' : '') : ''}`}>
+                      {c?.ratio != null ? sig(c.ratio, 3) : '–'}
+                    </td>
+                    <td className="calc">
+                      {c?.location_match == null ? (
+                        <span className="muted">–</span>
+                      ) : c.location_match ? (
+                        <span className="loc-ok" title="Failed where the model predicts">
+                          ✓
+                        </span>
+                      ) : (
+                        <span className="loc-bad" title="Failed away from the predicted critical location">
+                          ✗
+                        </span>
+                      )}
+                    </td>
                     <td className="c-num">
                       <NumberInput
                         ariaLabel={`Test ${t.id} cycles`}
@@ -494,6 +551,7 @@ export function TestingBottom() {
                         onClear={() => set(t.id, { volumetric_expansion_permanent: null }, 'vp')}
                       />
                     </td>
+                    <td className="num calc">{c?.expansion_ratio != null ? sig(c.expansion_ratio, 3) : '–'}</td>
                     <td className="c-date">
                       <TextInput
                         value={t.date}
@@ -509,26 +567,13 @@ export function TestingBottom() {
                         onCommit={(v) => set(t.id, { notes: v }, 'notes')}
                       />
                     </td>
-                    <td className="num sep-left">{c?.predicted != null ? sig(c.predicted, 4) : '–'}</td>
-                    <td className={`num ${c?.ratio != null ? (c.ratio < 1 ? 'bad' : '') : ''}`}>
-                      {c?.ratio != null ? sig(c.ratio, 3) : '–'}
-                    </td>
-                    <td>
-                      {c?.location_match == null ? (
-                        <span className="muted">–</span>
-                      ) : c.location_match ? (
-                        <span className="loc-ok" title="Failed where the model predicts">
-                          ✓
-                        </span>
-                      ) : (
-                        <span className="loc-bad" title="Failed away from the predicted critical location">
-                          ✗
-                        </span>
-                      )}
-                    </td>
-                    <td className="num">{c?.expansion_ratio != null ? sig(c.expansion_ratio, 3) : '–'}</td>
-                    <td className="row-actions">
-                      <button type="button" aria-label={`Duplicate test ${t.id}`} title="Duplicate" onClick={() => duplicate(i)}>
+                    <td className="row-actions sticky-act">
+                      <button
+                        type="button"
+                        aria-label={`Duplicate test ${t.id}`}
+                        title="Duplicate"
+                        onClick={() => duplicate(i)}
+                      >
                         <Icon name="copy" size={13} />
                       </button>
                       <button
@@ -722,7 +767,7 @@ function PasteDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
       for (const r of parsed.rows) {
         const d = newTestRecord(out, r.pressure);
         const id = r.id && !out.some((t) => t.id === r.id) ? r.id : d.id;
-        out.push(...normalizeTests([{ ...d, ...r, id }]));
+        out.push(...normalizeTests([{ ...d, date: '', ...r, id }]));
       }
       return { ...p, tests: out };
     });
@@ -739,18 +784,21 @@ function PasteDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
         <>
           <Button onClick={onClose}>Cancel</Button>
           <Button variant="primary" icon="check" disabled={!parsed.rows.length} onClick={doImport}>
-            {mode === 'append' ? 'Append' : 'Replace with'} {parsed.rows.length} record{parsed.rows.length === 1 ? '' : 's'}
+            {mode === 'append' ? 'Append' : 'Replace with'} {parsed.rows.length} record
+            {parsed.rows.length === 1 ? '' : 's'}
           </Button>
         </>
       }
     >
       <p className="small">
         Paste rows from a spreadsheet (tab separated) or CSV (comma / semicolon). A header row maps columns by name:{' '}
-        <code>serial, kind, pressure, failure_location, cycles, volumetric_expansion_total,
-        volumetric_expansion_permanent, date, notes</code>{' '}
-        (short forms like <code>location</code>, <code>expansion_total</code> work; a <code>pressure [bar]</code>{' '}
-        column is converted to MPa). Without a header the order is: serial, kind, pressure [MPa], location, ΔV total,
-        ΔV permanent, date, notes.
+        <code>
+          serial, kind, pressure, failure_location, cycles, volumetric_expansion_total, volumetric_expansion_permanent,
+          date, notes
+        </code>{' '}
+        (short forms like <code>location</code>, <code>expansion_total</code> work; a <code>pressure [bar]</code> column
+        is converted to MPa). Without a header the order is: serial, kind, pressure [MPa], location, ΔV total, ΔV
+        permanent, date, notes.
       </p>
       <textarea
         className="notes paste-area"
@@ -775,7 +823,8 @@ function PasteDialog({ open, onClose }: { open: boolean; onClose: () => void }) 
       </Field>
       {text.trim() ? (
         <p className="muted small">
-          {parsed.rows.length} row{parsed.rows.length === 1 ? '' : 's'} recognised · columns: {parsed.columns.join(', ')}
+          {parsed.rows.length} row{parsed.rows.length === 1 ? '' : 's'} recognised · columns:{' '}
+          {parsed.columns.join(', ')}
         </p>
       ) : null}
       {parsed.errors.length ? (

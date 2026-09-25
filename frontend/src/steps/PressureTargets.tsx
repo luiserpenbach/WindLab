@@ -61,10 +61,9 @@ export function PressureTargets({ compact }: { compact?: boolean }) {
         </tbody>
       </table>
       <div className="muted small">
-        Expected water-jacket readings at {sig(tRef, 3)} °C. Proof permanent
-        expansion is in addition to the autofrettage set; a much larger value points to a liner or bond problem.
+        Expected water-jacket readings at {sig(tRef, 3)} °C. Proof permanent expansion is in addition to the
+        autofrettage set; a much larger value points to a liner or bond problem.
       </div>
     </div>
   );
 }
-

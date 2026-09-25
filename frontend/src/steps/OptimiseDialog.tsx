@@ -208,8 +208,8 @@ export function OptimiseButton() {
               />
             </Field>
             <p className="muted small">
-              Starts from the current {project.layers.length}-layer layup. You can review the changes before
-              applying them (one undo step).
+              Starts from the current {project.layers.length}-layer layup. You can review the changes before applying
+              them (one undo step).
             </p>
             {phase.k === 'error' ? <Banner kind="fail">{phase.msg}</Banner> : null}
           </>
@@ -243,10 +243,12 @@ export function OptimiseButton() {
               <Kpi label="Evaluations" value={phase.r.evaluations.toLocaleString()} />
             </div>
             {phase.from !== project ? (
-              <Banner kind="warn">The project changed while the optimiser ran; Apply replaces the current layers.</Banner>
+              <Banner kind="warn">
+                The project changed while the optimiser ran; Apply replaces the current layers.
+              </Banner>
             ) : null}
             {!nChanged ? <Banner kind="info">No lighter layup found: the current one is kept.</Banner> : null}
-            <div className="table-scroll">
+            <div className="table-scroll diff-scroll">
               <table className="data-table compact diff-table">
                 <caption>
                   Layers {phase.from.layers.length} → {phase.layers.length}

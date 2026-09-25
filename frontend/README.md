@@ -1,7 +1,7 @@
 # WindLab web frontend
 
-Single-page UI for WindLab: design, analyse, simulate and export G-code for
-Type III COPVs wound on 3/4-axis filament-winding machines.
+Single-page UI for WindLab: design, analyse, correlate with tests, simulate and
+export G-code for Type III COPVs wound on 2/3/4-axis filament-winding machines.
 
 Stack: Vite + React 18 + TypeScript (strict) + plain `three`. No UI kit or
 charting library: form controls, the SVG line chart and the 3D viewer are in
@@ -38,15 +38,18 @@ src/
   api/        types.ts (mirrors backend/windlab/schemas.py), client.ts (typed fetch client)
   state/      projectStore (useReducer + undo/redo + localStorage autosave),
               analysis (debounced /api/analyze, catalog data), uiStore (step, theme,
-              selection, path/sim/thickness-map results, 3D overlay options),
+              selection, layer reveal, path/sim/thickness-map results, 3D overlay options),
+              materials (built-in + project materials), fe (FE valid mask),
               thickness (thickness-map colour scale), playback (simulation clock), defaults
   components/ fields (NumberInput etc.), ui (buttons, status, modal, KPI, progress),
               LineChart (SVG chart), BarChart (grouped bars), Heatmap (canvas map
               with SVG axes), TopBar, Stepper, Icon
   steps/      one panel per workflow step (+ optional bottom chart area), stepStatus,
-              TensionPanel (Layup: winding tension schedule)
+              TensionPanel (Layup: winding tension schedule), OptimiseDialog (Layup),
+              PressureTargets (water-jacket targets: Analysis, Testing, Export)
   viewer/     VesselViewer (three.js scene), Viewport (React wrapper), colors, colormaps
-  util/       formatting and download helpers
+  util/       formatting and download helpers, gcodeBackplot (G-code interpreter)
+  workers/    backplot.worker (parses the G-code for the backplot off the main thread)
 ```
 
 ## Behaviour notes
@@ -66,9 +69,11 @@ src/
   separator, and simple arithmetic (`300/2`) is accepted. Out-of-range values
   are flagged and not committed.
 - **Step status dots**: checks are routed to steps by id prefix (`geo`,
-  `liner`, `af`, `fatigue` → Vessel; `layer` (incl. `layer.<id>.slip` /
+  `liner` (incl. `liner.temp`, `liner.lbb`), `af`, `fatigue` → Vessel; `layer` (incl. `layer.<id>.slip` /
   `.path`), `layup` (e.g. `layup.bridging`), `tension`, `dome` → Layup; all
-  checks → Analysis). The Machine and Simulate dots come from the last
+  checks → Analysis; `sr.*` incl. `sr.temp` sit there too). Checks with `refs`
+  (layer ids) show chips; clicking the row or a chip opens the Layup step with
+  that layer selected and scrolled into view. The Machine and Simulate dots come from the last
   simulation's `limits_ok` and warnings; the Thickness dot from the last
   thickness map (warn on backend warnings, gaps > 0.5 %, overlaps > 5 % or
   cells without a value).
@@ -95,5 +100,37 @@ src/
   layer, only the layers wound before it are shown. The mandrel group rotates
   about +x by `frames.mandrel`, and the eye sits at `(carriage, crossfeed, 0)`,
   rotated by `frames.eye` about world y.
-- Keyboard: Alt+1…8 switches steps. In the layer table, Alt+↑/↓ on a layer
+- **Materials library** (Materials step, below the 3D view): built-in records
+  (`/api/materials`) and the project's custom ones (`Project.materials`, saved
+  with the project) per kind. "Duplicate as custom" opens an editor prefilled
+  from a built-in record; custom records can be edited (renaming the id
+  updates the references), duplicated and deleted (not while in use unless a
+  built-in with the same id takes over). A custom record with a built-in id
+  overrides it, as in the backend. All fibre/resin/liner selects list custom
+  materials first, marked "(custom)".
+- **Layer fields**: per-layer fibre override (badge in the layer table), hoop
+  band overlap (0–90 %), start angle (pattern clocking).
+- **Thermal**: operating temperature range + test ambient (Vessel), cure /
+  stress-free temperature (Materials; one click takes the resin's final cure
+  temperature). Analysis shows "After cure", "MEOP cold/hot" rows and the
+  worst stress ratio over the range.
+- **Testing step** (`/api/calibrate`, re-run 600 ms after edits while the step
+  is open): editable test records, CSV / spreadsheet paste import (header
+  aliases, `pressure [bar]` converted), measured-vs-predicted burst chart or
+  ratio bars, and "Apply suggested / B-basis efficiency" (one undo step;
+  disabled outside 0.3 < η ≤ 1).
+- **Optimise mass** (Layup, `/api/optimise`): time budget 5–600 s, progress
+  with elapsed time and cancel (aborts the request; the server finishes its
+  run), then a per-layer diff (new / changed / moved / removed) and Apply as
+  one undo step.
+- **Export**: G-code verification card (green when the backend verifier found
+  no errors and its interpreted time matches), axis ranges and largest steps;
+  a **backplot** tab that interprets the program in a Web Worker (G0/G1,
+  G92/G92.1, G93/G94; ~0.5 s for 500k lines) and plots every axis vs line or
+  time with min/max decimation and layer markers; design report (opens in a
+  new tab from a Blob URL, also as .html); Abaqus export (.inp + layup .csv);
+  pressure test targets next to the traveller.
+- **2-axis machines**: no crossfeed column / zero radius; the Simulate readout
+  shows the fixed eye radius and the 3D eye does not move radially.
+- Keyboard: Alt+1…9 switches steps. In the layer table, Alt+↑/↓ on a layer
   moves it.

@@ -254,7 +254,11 @@ function LoadTable({
 }) {
   const t = (v: number) => `${sig(v, 3)} °C`;
   const rows: [string, LoadPoint | null, string][] = [
-    ['After cure', st.cure_residual, `Cool-down from the stress-free temperature to ${t(temps.temperature_ref)}, before autofrettage`],
+    [
+      'After cure',
+      st.cure_residual,
+      `Cool-down from the stress-free temperature to ${t(temps.temperature_ref)}, before autofrettage`,
+    ],
     ['Residual (0)', st.residual, `After autofrettage, at 0 MPa and ${t(temps.temperature_ref)}`],
     ['MEOP cold', st.meop_cold, `MEOP at ${t(temps.temperature_min)}`],
     ['MEOP', st.at_meop, `MEOP at ${t(temps.temperature_ref)}`],
@@ -288,14 +292,14 @@ function LoadTable({
         <tbody>
           {rows.map(([k, p, title]) =>
             p ? (
-            <tr key={k} title={title} className={k === 'MEOP' ? 'row-strong' : undefined}>
-              <td>{k}</td>
-              <td className="num">{sig(p.pressure, 4)}</td>
-              <td className="num">{sig(p.liner_vm, 4)}</td>
-              <td className="num">{sig(p.liner_hoop, 4)}</td>
-              <td className="num">{sig(p.fiber_hoop, 4)}</td>
-              <td className="num">{sig(p.fiber_helical, 4)}</td>
-            </tr>
+              <tr key={k} title={title} className={k === 'MEOP' ? 'row-strong' : undefined}>
+                <td>{k}</td>
+                <td className="num">{sig(p.pressure, 4)}</td>
+                <td className="num">{sig(p.liner_vm, 4)}</td>
+                <td className="num">{sig(p.liner_hoop, 4)}</td>
+                <td className="num">{sig(p.fiber_hoop, 4)}</td>
+                <td className="num">{sig(p.fiber_helical, 4)}</td>
+              </tr>
             ) : null,
           )}
         </tbody>
@@ -546,7 +550,8 @@ export function LinerStressChart({ height = 250 }: { height?: number }) {
     });
     const peak = Math.max(vi[ih], vo[ih]);
     // cylinder reference of the hot-spot factor (the linear-elastic FE cycle: stress range = stress at MEOP)
-    const ref = fe.liner_vm_ref > 0 ? fe.liner_vm_ref : fe.liner_hotspot_factor > 0 ? peak / fe.liner_hotspot_factor : 0;
+    const ref =
+      fe.liner_vm_ref > 0 ? fe.liner_vm_ref : fe.liner_hotspot_factor > 0 ? peak / fe.liner_hotspot_factor : 0;
     const series: Series[] = [
       { id: 'in', name: 'inner surface', x: fe.z, y: vi, color: 'var(--series-1)' },
       { id: 'out', name: 'outer surface', x: fe.z, y: vo, color: 'var(--series-2)', dash: '5 3' },

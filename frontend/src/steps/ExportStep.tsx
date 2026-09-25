@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { api, errorMessage } from '../api/client';
 import type {
+  CcxExportResponse,
   FeaExportResponse,
   GcodeResponse,
   GcodeVerification,
@@ -38,6 +39,10 @@ interface ExportState {
   feaFor: Project | null;
   feaBusy: boolean;
   feaError: string | null;
+  ccx: CcxExportResponse | null;
+  ccxFor: Project | null;
+  ccxBusy: boolean;
+  ccxError: string | null;
   backplot: BackplotResult | null;
   /** G-code response the backplot belongs to */
   backplotFor: GcodeResponse | null;
@@ -63,6 +68,10 @@ let state: ExportState = {
   feaFor: null,
   feaBusy: false,
   feaError: null,
+  ccx: null,
+  ccxFor: null,
+  ccxBusy: false,
+  ccxError: null,
   backplot: null,
   backplotFor: null,
   backplotProgress: null,
@@ -104,7 +113,12 @@ function backplotAxes(m: MachineSpec): BackplotAxis[] {
     if (!ax) continue;
     if (role === 'crossfeed' && m.axes_count < 3) continue;
     if (role === 'eye' && m.axes_count < 4) continue;
-    out.push({ letter: ax.letter.toUpperCase(), role, vmax: ax.max_velocity, rotary: role === 'mandrel' || role === 'eye' });
+    out.push({
+      letter: ax.letter.toUpperCase(),
+      role,
+      vmax: ax.max_velocity,
+      rotary: role === 'mandrel' || role === 'eye',
+    });
   }
   return out;
 }
@@ -233,6 +247,17 @@ export function ExportPanel() {
     }
   };
 
+  const genCcx = async () => {
+    store.set({ ccxBusy: true, ccxError: null });
+    try {
+      const r = await api.ccxExport(project);
+      store.set({ ccx: r, ccxFor: project, ccxBusy: false });
+      downloadText(r.filename, r.inp);
+    } catch (e) {
+      store.set({ ccxError: errorMessage(e), ccxBusy: false });
+    }
+  };
+
   return (
     <>
       <Section title="G-code">
@@ -340,7 +365,7 @@ export function ExportPanel() {
         <PressureTargets compact />
       </Section>
 
-      <Section title="Design report">
+      <Section title="Report">
         <p className="muted small">
           Self-contained, printable report: requirements, materials, layup, analysis results and checks.
         </p>
@@ -385,9 +410,10 @@ export function ExportPanel() {
         {s.report && s.reportFor !== project ? <Banner kind="info">Project changed since generation.</Banner> : null}
       </Section>
 
-      <Section title="FEA export (Abaqus)">
+      <Section title="FEA export">
         <p className="muted small">
-          Axisymmetric shell model (SAX1) of liner + layup as an Abaqus input deck, plus the layup table as CSV.
+          <strong>Abaqus:</strong> axisymmetric shell model (SAX1) of liner + layup as an input deck, plus the layup
+          table as CSV.
         </p>
         <div className="toolbar">
           <Button icon="download" disabled={s.feaBusy} onClick={genFea}>
@@ -400,10 +426,15 @@ export function ExportPanel() {
           <>
             <div className="kpi-grid">
               <Kpi label="Elements" value={s.fea.elements.toLocaleString()} sub="SAX1 shell elements" />
-              <Kpi label="Materials" value={s.fea.materials} sub="liner + ply sections" />
+              <Kpi label="Materials" value={s.fea.materials} sub="material / section definitions" />
             </div>
             <div className="toolbar">
-              <Button size="sm" variant="ghost" icon="download" onClick={() => s.fea && downloadText(s.fea.filename, s.fea.inp)}>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="download"
+                onClick={() => s.fea && downloadText(s.fea.filename, s.fea.inp)}
+              >
                 {s.fea.filename}
               </Button>
               <Button
@@ -419,9 +450,42 @@ export function ExportPanel() {
           </>
         ) : null}
         <Banner kind="warn">
-          The deck has not been validated in Abaqus by the WindLab authors. Check units (mm, MPa, N), section
+          The Abaqus deck has not been validated in Abaqus by the WindLab authors. Check units (mm, MPa, N), section
           orientations, boundary conditions and loads before using its results.
         </Banner>
+        <p className="muted small fea-sep">
+          <strong>CalculiX:</strong> axisymmetric solid model (CAX8/CAX6, one element row per layer, liner plasticity)
+          with cure cool-down, autofrettage, proof and MEOP steps. Open source; the WindLab test suite runs it against
+          the cylinder model.
+        </p>
+        <div className="toolbar">
+          <Button icon="download" disabled={s.ccxBusy} onClick={genCcx}>
+            CalculiX export
+          </Button>
+          {s.ccxBusy ? <Spinner size={12} label="Exporting" /> : null}
+        </div>
+        {s.ccxError ? <Banner kind="fail">{s.ccxError}</Banner> : null}
+        {s.ccx ? (
+          <>
+            <div className="kpi-grid three">
+              <Kpi label="Elements" value={s.ccx.elements.toLocaleString()} />
+              <Kpi label="Nodes" value={s.ccx.nodes.toLocaleString()} />
+              <Kpi label="Materials" value={s.ccx.materials} />
+            </div>
+            <div className="muted small">Steps: {s.ccx.steps.join(' → ')}</div>
+            <div className="toolbar">
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="download"
+                onClick={() => s.ccx && downloadText(s.ccx.filename, s.ccx.inp)}
+              >
+                {s.ccx.filename}
+              </Button>
+            </div>
+            {s.ccxFor !== project ? <Banner kind="info">Project changed since export.</Banner> : null}
+          </>
+        ) : null}
       </Section>
     </>
   );
@@ -574,6 +638,20 @@ function VerificationCard({ v, r, machine }: { v: GcodeVerification; r: GcodeRes
     return (ra < 0 ? 9 : ra) - (rb < 0 ? 9 : rb) || a.localeCompare(b);
   });
   const mandrel = machine.mandrel.letter.toUpperCase();
+  const rows = letters.map((L) => {
+    const [lo, hi] = v.ranges[L];
+    const role = roleOf(machine, L);
+    const ax = role ? machine[role as (typeof AXIS_ROLES)[number]] : null;
+    return {
+      L,
+      lo,
+      hi,
+      role,
+      ax,
+      below: ax?.min != null && lo < ax.min - 1e-6,
+      above: ax?.max != null && hi > ax.max + 1e-6,
+    };
+  });
   return (
     <div className={`card verify-card ${ok ? 'v-ok' : 'v-bad'}`} role="status">
       <div className="card-title verify-title">
@@ -598,37 +676,41 @@ function VerificationCard({ v, r, machine }: { v: GcodeVerification; r: GcodeRes
             <th className="num" title="Largest change in one feed move [machine units]">
               Max step
             </th>
-            <th title="Soft limits of the machine">Limits</th>
           </tr>
         </thead>
         <tbody>
-          {letters.map((L) => {
-            const [lo, hi] = v.ranges[L];
-            const role = roleOf(machine, L);
-            const ax = role ? machine[role as (typeof AXIS_ROLES)[number]] : null;
-            const below = ax?.min != null && lo < ax.min - 1e-6;
-            const above = ax?.max != null && hi > ax.max + 1e-6;
+          {rows.map(({ L, lo, hi, role, ax, below, above }) => {
+            const lim =
+              ax && (ax.min != null || ax.max != null)
+                ? `soft limits ${ax.min ?? '−∞'} … ${ax.max ?? '∞'}`
+                : 'no soft limits';
             return (
               <tr key={L}>
                 <td>
                   <strong>{L}</strong> <span className="muted">{ROLE_LABEL[role] ?? ''}</span>
                 </td>
-                <td className={`num ${below ? 'bad' : ''}`}>{sig(lo, 6)}</td>
-                <td className={`num ${above ? 'bad' : ''}`}>{sig(hi, 6)}</td>
-                <td className="num">
-                  {sig(v.max_step[L] ?? 0, 4)}
-                  {L === mandrel ? <span className="muted"> °</span> : null}
+                <td className={`num ${below ? 'bad' : ''}`} title={lim}>
+                  {sig(lo, 6)}
                 </td>
-                <td className={`small ${below || above ? 'bad' : 'muted'}`}>
-                  {ax && (ax.min != null || ax.max != null)
-                    ? `${ax.min ?? '−∞'} … ${ax.max ?? '∞'}${below || above ? ' exceeded' : ''}`
-                    : '–'}
+                <td className={`num ${above ? 'bad' : ''}`} title={lim}>
+                  {sig(hi, 6)}
+                </td>
+                <td className="num" title={L === mandrel ? 'Largest mandrel increment per feed move' : undefined}>
+                  {sig(v.max_step[L] ?? 0, 4)}
                 </td>
               </tr>
             );
           })}
         </tbody>
       </table>
+      {rows
+        .filter((r) => r.below || r.above)
+        .map((r) => (
+          <div key={r.L} className="verify-limit">
+            <Icon name="alert" size={12} /> {r.L} ({ROLE_LABEL[r.role]}) leaves its soft limits {r.ax?.min ?? '−∞'} …{' '}
+            {r.ax?.max ?? '∞'}
+          </div>
+        ))}
       {v.errors.length ? (
         <ul className="verify-errors">
           {v.errors.map((e, i) => (
@@ -649,15 +731,19 @@ function Backplot({ r }: { r: GcodeResponse }) {
   const [xMode, setXMode] = useState<BpX>('line');
   const bp = s.backplotFor === r ? s.backplot : null;
   const machine = (s.gcodeFor ?? project).machine;
+  // time axis in s / min / h depending on the program length
+  const tUnit = !bp || bp.totalTime < 600 ? 's' : bp.totalTime < 5 * 3600 ? 'min' : 'h';
+  const tDiv = tUnit === 's' ? 1 : tUnit === 'min' ? 60 : 3600;
   const charts = useMemo(() => {
     if (!bp) return null;
     return bp.series.map((sr, k) => {
       const d = xMode === 'line' ? sr.byLine : sr.byTime;
+      const div = xMode === 'line' ? 1 : tDiv;
       const series: Series[] = [
         {
           id: sr.letter,
           name: `${ROLE_LABEL[sr.role] ?? sr.role} ${sr.letter}`,
-          x: Array.from(d.x),
+          x: Array.from(d.x, (v) => v / div),
           y: Array.from(d.y),
           color: BP_COLORS[k % BP_COLORS.length],
           width: 1.25,
@@ -665,16 +751,19 @@ function Backplot({ r }: { r: GcodeResponse }) {
       ];
       return { sr, series };
     });
-  }, [bp, xMode]);
-  const vlines: RefLine[] = useMemo(
-    () =>
-      (bp?.layers ?? []).map((l) => ({
-        value: xMode === 'line' ? l.line : l.time,
-        label: bp && bp.layers.length <= 12 ? l.label : undefined,
-        color: 'var(--axis)',
-      })),
-    [bp, xMode],
-  );
+  }, [bp, xMode, tDiv]);
+  const vlines: RefLine[] = useMemo(() => {
+    if (!bp) return [];
+    const xs = bp.layers.map((l) => (xMode === 'line' ? l.line : l.time / tDiv));
+    const span = (xMode === 'line' ? bp.lines : bp.totalTime / tDiv) || 1;
+    // label a layer marker only when it is far enough from the previous labelled one
+    let lastLabelled = -Infinity;
+    return bp.layers.map((l, i) => {
+      const room = (xs[i] - lastLabelled) / span > 0.15;
+      if (room) lastLabelled = xs[i];
+      return { value: xs[i], label: room ? l.label : undefined, color: 'var(--axis)' };
+    });
+  }, [bp, xMode, tDiv]);
   if (s.backplotFor !== r || (!bp && s.backplotProgress == null && !s.backplotError))
     return (
       <Empty>
@@ -728,8 +817,8 @@ function Backplot({ r }: { r: GcodeResponse }) {
             series={series}
             vlines={vlines}
             xLabel={xMode === 'line' ? 'Line' : 't'}
-            xUnit={xMode === 'line' ? undefined : 's'}
-            xFormat={xMode === 'line' ? (x) => Math.round(x).toLocaleString() : (x) => fmtTime(x)}
+            xUnit={xMode === 'line' ? undefined : tUnit}
+            xFormat={xMode === 'line' ? (x) => Math.round(x).toLocaleString() : undefined}
             yLabel={sr.letter}
             yUnit={unitOf(sr.role)}
             height={170}

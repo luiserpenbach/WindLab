@@ -46,6 +46,9 @@ function fiberBadge(e: MatEntry<Fiber> | null, id: string): string {
   return id.split(/[-\s]/)[0].slice(0, 6);
 }
 
+/** Last handled reveal request (so returning to the step later does not scroll again). */
+let revealHandled = 0;
+
 function useLayerResults(): Map<string, LayerResult> {
   const { result } = useAnalysis();
   return useMemo(() => new Map((result?.layers ?? []).map((l) => [l.id, l])), [result]);
@@ -78,8 +81,9 @@ export function LayupPanel() {
   const tableRef = useRef<HTMLTableElement>(null);
   // A check row asked to show a layer: scroll it into view and focus it.
   useEffect(() => {
-    if (!reveal) return;
+    if (!reveal || reveal.n === revealHandled) return;
     const id = window.requestAnimationFrame(() => {
+      revealHandled = reveal.n;
       const row = tableRef.current?.querySelector<HTMLTableRowElement>(`tr[data-layer="${CSS.escape(reveal.id)}"]`);
       if (!row) return;
       row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });

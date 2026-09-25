@@ -2254,7 +2254,8 @@ td.bad {
 }
 .mono-id {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 10.5px;
+  line-height: 1.2;
 }
 .lib-table tr.shadowed td {
   opacity: 0.55;
@@ -2465,8 +2466,24 @@ td.bad {
 .test-table .c-num .numin {
   width: 68px;
 }
-.test-table .sep-left {
-  border-left: 1px solid var(--border-strong);
+.test-table .calc {
+  background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+}
+.test-table thead th.calc {
+  background: color-mix(in srgb, var(--accent-soft) 60%, var(--surface-2));
+}
+.test-table .sticky-act {
+  position: sticky;
+  right: 0;
+  background: var(--surface);
+  box-shadow: -1px 0 0 var(--border);
+}
+.test-table thead th.sticky-act {
+  background: var(--surface-2);
+  z-index: 2;
+}
+.test-table tbody tr:hover td.sticky-act {
+  background: var(--surface-2);
 }
 .loc-ok {
   color: var(--status-ok);
@@ -2512,6 +2529,22 @@ textarea.paste-area {
 .verify-table td.bad {
   color: var(--status-fail);
   font-weight: 600;
+}
+.fea-sep {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.verify-limit {
+  font-size: 11.5px;
+  color: var(--status-fail);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+}
+.modal .diff-scroll {
+  max-height: none;
 }
 .verify-errors {
   margin: 6px 0 0;
